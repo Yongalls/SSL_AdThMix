@@ -21,6 +21,7 @@ import torchvision
 from torchvision import datasets, models, transforms
 
 import tensorflow as tf
+
 from tqdm import tqdm
 
 from ImageDataLoader import SimpleImageLoader, TripletImageLoader
@@ -59,10 +60,12 @@ class AverageMeter(object):
 class SummaryWriter(object):
     def __init__(self, log_dir):
         self.log_dir = log_dir
-        self.summary_writer = tf.compat.v1.summary.FileWriter(log_dir) 
+        #self.summary_writer = tf.compat.v1.summary.FileWriter(log_dir) 
+        self.summary_writer = tf.summary.FileWriter(log_dir) 
         
     def add_scalar(self, tag, value, step):
-        summary = tf.compat.v1.Summary()
+        #summary = tf.compat.v1.Summary()
+        summary = tf.Summary()
         summary.value.add(tag=tag, simple_value=value)
         self.summary_writer.add_summary(summary, step)
         self.summary_writer.flush()
@@ -86,7 +89,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
 # Options
 ######################################################################
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
-parser.add_argument('--datadir',default='/home1/irteam/users/shine0624/kaist-naver/kaist_naver_product200k/', type=str, help='training dir path')
+parser.add_argument('--datadir',default='/meta', type=str, help='training dir path')
 
 parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
 parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train (default: 10)')

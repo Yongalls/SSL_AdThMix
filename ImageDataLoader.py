@@ -5,6 +5,8 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import numpy as np
 import torch
+import nsml
+from nsml import DATASET_PATH
 
 def default_image_loader(path):
     return Image.open(path).convert('RGB')
@@ -19,16 +21,23 @@ class TransformTwice:
     
 class SimpleImageLoader(torch.utils.data.Dataset):
     def __init__(self, args, split, transform=None, loader=default_image_loader):
-        rootdir = os.path.join(args.datadir)
-        self.impath = os.path.join(args.datadir, 'downimages')
+        print(DATASET_PATH)
+        print(os.listdir(DATASET_PATH))
+        print(nsml.IS_ON_NSML)
+        print(nsml.HAS_DATASET)
+        print(nsml.DATASET_PATH)
+        print(nsml.DATASET_NAME)
+        self.impath = os.path.join(DATASET_PATH, 'train')
         self.datasets = []
+        rootdir = "meta"
         if split == 'train' : data_file = os.path.join(rootdir, '%s' % args.trainfile)
         elif split == 'test' : data_file = os.path.join(rootdir, '%s' % args.testfile)            
         elif split == 'validation' : data_file = os.path.join(rootdir, '%s' % args.validfile)    
         elif split == 'unlabel' : data_file = os.path.join(rootdir, '%s' % args.unlabelfile)   
         else: print('wrong split information')
             
-        meta_file = os.path.join(rootdir, data_file)    
+        #meta_file = os.path.join(rootdir, data_file)    
+        meta_file = data_file
         self.subpath_to_idx_dict = {}
         identity_class= set()
         imnames = []

@@ -14,3 +14,10 @@
 ---
 ### for test
 > python test.py --gpu_ids 0 --reuse --name your_model_name 
+
+
+---
+### for nsml
+> nsml run -d image -e train_classification.py -a "--gpu_ids 0 --tripletmode --trainfile meta/kaist_naver_prod200k_class265_train01.txt --name your_model_name --lr 1e-4 --batchsize 128 --epochs 200 --lr 5e-3 --momentum 0.9"
+
+
