@@ -24,7 +24,7 @@ import torch.nn.functional as F
 import torchvision
 from torchvision import datasets, models, transforms
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import torch.nn.functional as F
 
 from ImageDataLoader import SimpleImageLoader, TripletImageLoader
@@ -45,7 +45,7 @@ def top_n_accuracy_score(y_true, y_prob, n=5, normalize=True):
         return counter * 1.0 / num_obs
     else:
         return counter
-        
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self):
@@ -60,22 +60,22 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-        
+
 class SummaryWriter(object):
     def __init__(self, log_dir):
         self.log_dir = log_dir
-        self.summary_writer = tf.compat.v1.summary.FileWriter(log_dir) 
+        self.summary_writer = tf.summary.FileWriter(log_dir)
     def add_scalar(self, tag, value, step):
-        summary = tf.compat.v1.Summary()
+        summary = tf.Summary()
         summary.value.add(tag=tag, simple_value=value)
         self.summary_writer.add_summary(summary, step)
         self.summary_writer.flush()
-        
+
 def adjust_learning_rate(opts, optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
     lr = opts.lr * (0.1 ** (epoch // 30))
     for param_group in optimizer.param_groups:
-        param_group['lr'] = lr        
+        param_group['lr'] = lr
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     """Saves checkpoint to disk"""
@@ -86,14 +86,14 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'runs/%s/' % (opts.name) + 'model_best.pth.tar')
-        
+
 def linear_rampup(current, rampup_length):
     if rampup_length == 0:
         return 1.0
     else:
         current = np.clip(current / rampup_length, 0.0, 1.0)
         return float(current)
-        
+
 class SemiLoss(object):
     def __call__(self, outputs_x, targets_x, outputs_u, targets_u, epoch, final_epoch):
         probs_u = torch.softmax(outputs_u, dim=1)
@@ -172,7 +172,7 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    
+
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
     use_gpu = torch.cuda.is_available()
     if use_gpu:
@@ -185,7 +185,7 @@ def main():
 
     ##########################
     # Set dataloader
-    ##########################    
+    ##########################
     train_loader = torch.utils.data.DataLoader(
         SimpleImageLoader(opts, 'train',
                           transform=transforms.Compose([
@@ -194,9 +194,9 @@ def main():
                               transforms.RandomHorizontalFlip(),
                               transforms.RandomVerticalFlip(),
                               transforms.ToTensor(),
-                              transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])), 
+                              transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
         batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-    print('train_loader done')   
+    print('train_loader done')
 
     unlabel_loader = torch.utils.data.DataLoader(
         SimpleImageLoader(opts, 'unlabel',
@@ -206,71 +206,71 @@ def main():
                               transforms.RandomHorizontalFlip(),
                               transforms.RandomVerticalFlip(),
                               transforms.ToTensor(),
-                              transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])), 
+                              transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
         batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-    print('unlabel_loader done')    
-    
+    print('unlabel_loader done')
+
     validation_loader = torch.utils.data.DataLoader(
-        SimpleImageLoader(opts, 'validation', 
+        SimpleImageLoader(opts, 'validation',
                            transform=transforms.Compose([
                                transforms.Resize(opts.imResize),
                                transforms.CenterCrop(opts.imsize),
                                transforms.ToTensor(),
                                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                            ])), batch_size=opts.batchsize, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
-    print('validation_loader done')          
-    
+    print('validation_loader done')
+
     ##########################
     # Set model
     ##########################
     class_numbers = train_loader.dataset.classnumber
-    model = Res18_basic(class_numbers)    
+    model = Res18_basic(class_numbers)
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     n_parameters = sum([p.data.nelement() for p in model.parameters()])
-    print('  + Number of params: {}'.format(n_parameters))            
-    
+    print('  + Number of params: {}'.format(n_parameters))
+
     if use_gpu:
         model.cuda()
-        
+
     ##########################
     # Set optimizer
-    ##########################    
-    writer = SummaryWriter( 'runs/%s/' % (opts.name) )    
-    
+    ##########################
+    writer = SummaryWriter( 'runs/%s/' % (opts.name) )
+
     # Set optimizer
     optimizer = optim.Adam(model.parameters(), lr=opts.lr)
     #optimizer = optim.SGD(model.parameters(), lr=opts.lr,  momentum=opts.momentum )
-    
+
     # INSTANTIATE LOSS CLASS
     train_criterion = SemiLoss()
-             
+
     # INSTANTIATE STEP LEARNING SCHEDULER CLASS
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)   
-    
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
+
     best_acc = 0.0
-    
-    for epoch in range(opts.start_epoch, opts.epochs + 1):    
+
+    for epoch in range(opts.start_epoch, opts.epochs + 1):
         scheduler.step()
-        
+
         print('start training')
         loss, acc_top1, acc_top5 = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, writer, use_gpu)
-        is_best = acc_top1 > best_acc    
-        best_acc = max(acc_top1, best_acc)    
-        save_checkpoint({'epoch': epoch + 1, 'state_dict': model.state_dict(), 'best_prec1': best_acc,}, is_best)   
+        is_best = acc_top1 > best_acc
+        best_acc = max(acc_top1, best_acc)
+        save_checkpoint({'epoch': epoch + 1, 'state_dict': model.state_dict(), 'best_prec1': best_acc,}, is_best)
         writer.add_scalar('train_epoch/loss', loss, epoch)
-        writer.add_scalar('train_epoch/acc_train_top1', acc_top1, epoch)       
-        writer.add_scalar('train_epoch/acc_train_top5', acc_top5, epoch)  
-        
+        writer.add_scalar('train_epoch/acc_train_top1', acc_top1, epoch)
+        writer.add_scalar('train_epoch/acc_train_top5', acc_top5, epoch)
+
         print('start validation')
         acc_top1_test, acc_top5_test = validation(opts, validation_loader, model, epoch, writer, use_gpu)
-        writer.add_scalar('test_epoch/acc_val_top1', acc_top1_test, epoch)  
-        writer.add_scalar('test_epoch/acc_val_top5', acc_top5_test, epoch)  
-            
+        writer.add_scalar('test_epoch/acc_val_top1', acc_top1_test, epoch)
+        writer.add_scalar('test_epoch/acc_val_top5', acc_top5_test, epoch)
+
     checkpoint = torch.load('runs/%s/' % (opts.name) + 'model_best.pth.tar')
     model.load_state_dict(checkpoint['state_dict'])
-                
+
 def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, writer, use_gpu):
-    
+
     losses = AverageMeter()
     losses_x = AverageMeter()
     losses_un = AverageMeter()
@@ -280,42 +280,42 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     avg_loss = 0.0
     avg_top1 = 0.0
     avg_top5 = 0.0
-    
+
     model.train()
-    
-    nCnt =0 
-    steps = (epoch - 1) * opts.val_iteration 
+
+    nCnt =0
+    steps = (epoch - 1) * opts.val_iteration
     labeled_train_iter = iter(train_loader)
     unlabeled_train_iter = iter(unlabel_loader)
-    
+
     for batch_idx in range(opts.val_iteration):
         try:
             data = labeled_train_iter.next()
             inputs_x, targets_x = data
         except:
-            labeled_train_iter = iter(train_loader)       
+            labeled_train_iter = iter(train_loader)
             data = labeled_train_iter.next()
             inputs_x, targets_x = data
         try:
             data = unlabeled_train_iter.next()
             inputs_u1, inputs_u2, _ = data
         except:
-            unlabeled_train_iter = iter(unlabel_loader)       
+            unlabeled_train_iter = iter(unlabel_loader)
             data = unlabeled_train_iter.next()
-            inputs_u1, inputs_u2, _ = data         
-    
+            inputs_u1, inputs_u2, _ = data
+
         batch_size = inputs_x.size(0)
         # Transform label to one-hot
         classno =  train_loader.dataset.classnumber
         targets_org = targets_x
-        targets_x = torch.zeros(batch_size, classno).scatter_(1, targets_x.view(-1,1), 1)        
-        
+        targets_x = torch.zeros(batch_size, classno).scatter_(1, targets_x.view(-1,1), 1)
+
         if use_gpu :
             inputs_x, targets_x = inputs_x.cuda(), targets_x.cuda()
-            inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()    
+            inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()
         inputs_x, targets_x = Variable(inputs_x), Variable(targets_x)
         inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
-        
+
         with torch.no_grad():
             # compute guessed labels of unlabel samples
             embed_u1, pred_u1 = model(inputs_u1)
@@ -324,37 +324,37 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             pt = pred_u_all**(1/opts.T)
             targets_u = pt / pt.sum(dim=1, keepdim=True)
             targets_u = targets_u.detach()
-            
+
         # mixup
         all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2], dim=0)
-        all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)            
-        
-        lamda = np.random.beta(opts.alpha, opts.alpha)        
-        lamda= max(lamda, 1-lamda)    
+        all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)
+
+        lamda = np.random.beta(opts.alpha, opts.alpha)
+        lamda= max(lamda, 1-lamda)
         newidx = torch.randperm(all_inputs.size(0))
         input_a, input_b = all_inputs, all_inputs[newidx]
-        target_a, target_b = all_targets, all_targets[newidx]        
-        
+        target_a, target_b = all_targets, all_targets[newidx]
+
         mixed_input = lamda * input_a + (1 - lamda) * input_b
         mixed_target = lamda * target_a + (1 - lamda) * target_b
-        
-        # interleave labeled and unlabed samples between batches to get correct batchnorm calculation 
+
+        # interleave labeled and unlabed samples between batches to get correct batchnorm calculation
         mixed_input = list(torch.split(mixed_input, batch_size))
         mixed_input = interleave(mixed_input, batch_size)
 
         optimizer.zero_grad()
-        
+
         fea, logits_temp = model(mixed_input[0])
         logits = [logits_temp]
         for newinput in mixed_input[1:]:
             fea, logits_temp = model(newinput)
-            logits.append(logits_temp)        
-            
+            logits.append(logits_temp)
+
         # put interleaved samples back
         logits = interleave(logits, batch_size)
         logits_x = logits[0]
-        logits_u = torch.cat(logits[1:], dim=0)            
-        
+        logits_u = torch.cat(logits[1:], dim=0)
+
         loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/opts.val_iteration, opts.epochs)
         loss = loss_x + weigts_mixing * loss_un
 
@@ -362,49 +362,49 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         losses_x.update(loss_x.item(), inputs_x.size(0))
         losses_un.update(loss_un.item(), inputs_x.size(0))
         weight_scale.update(weigts_mixing, inputs_x.size(0))
-                
+
         # compute gradient and do SGD step
         loss.backward()
         optimizer.step()
-        
+
         with torch.no_grad():
             # compute guessed labels of unlabel samples
             embed_x, pred_x1 = model(inputs_x)
 
         acc_top1b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=1)*100
-        acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100    
-        acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))        
-        acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))   
-        
+        acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100
+        acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))
+        acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))
+
         avg_loss += loss.item()
         avg_top1 += acc_top1b
-        avg_top5 += acc_top5b  
-        
+        avg_top5 += acc_top5b
+
         if batch_idx % opts.log_interval == 0:
-            print('Train Epoch:{} [{}/{}] Loss:{:.4f}({:.4f}) Top-1:{:.2f}%({:.2f}%) Top-5:{:.2f}%({:.2f}%) '.format( 
-                epoch, batch_idx *inputs_x.size(0), len(train_loader.dataset), losses.val, losses.avg, acc_top1.val, acc_top1.avg, acc_top5.val, acc_top5.avg))            
-                
+            print('Train Epoch:{} [{}/{}] Loss:{:.4f}({:.4f}) Top-1:{:.2f}%({:.2f}%) Top-5:{:.2f}%({:.2f}%) '.format(
+                epoch, batch_idx *inputs_x.size(0), len(train_loader.dataset), losses.val, losses.avg, acc_top1.val, acc_top1.avg, acc_top5.val, acc_top5.avg))
+
         writer.add_scalar('train_step/loss', loss.item(), steps)
         writer.add_scalar('train_step/loss_x',loss_x.item(), steps)
         writer.add_scalar('train_step/loss_unlabel', loss_un.item(), steps)
-        writer.add_scalar('train_step/acc_top1', acc_top1b, steps)     
-        writer.add_scalar('train_step/acc_top5', acc_top5b, steps)    
-        
+        writer.add_scalar('train_step/acc_top1', acc_top1b, steps)
+        writer.add_scalar('train_step/acc_top5', acc_top5b, steps)
+
         steps += 1
-        nCnt += 1 
-        
+        nCnt += 1
+
     avg_loss =  float(avg_loss/nCnt)
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
-    
-    return  avg_loss, avg_top1, avg_top5    
+
+    return  avg_loss, avg_top1, avg_top5
 
 
 def validation(opts, validation_loader, model, epoch, writer, use_gpu):
     model.eval()
     avg_top1= 0.0
     avg_top5 = 0.0
-    nCnt =0 
+    nCnt =0
     steps = (epoch - 1) * len(validation_loader)
     with torch.no_grad():
         for batch_idx, data in enumerate(tqdm(validation_loader)):
@@ -412,7 +412,7 @@ def validation(opts, validation_loader, model, epoch, writer, use_gpu):
             if use_gpu :
                 inputs = inputs.cuda()
             inputs = Variable(inputs)
-            steps += 1        
+            steps += 1
             nCnt +=1
             embed_fea, preds = model(inputs)
 
@@ -420,14 +420,13 @@ def validation(opts, validation_loader, model, epoch, writer, use_gpu):
             acc_top5 = top_n_accuracy_score(labels.numpy(), preds.data.cpu().numpy(), n=5)*100
             avg_top1 += acc_top1
             avg_top5 += acc_top5
-            writer.add_scalar('test_step/acc_val_top1', acc_top1, steps)    
-            writer.add_scalar('test_step/acc_val_top5', acc_top5, steps)   
-        avg_top1 = float(avg_top1/nCnt)   
-        avg_top5= float(avg_top5/nCnt)   
+            writer.add_scalar('test_step/acc_val_top1', acc_top1, steps)
+            writer.add_scalar('test_step/acc_val_top5', acc_top5, steps)
+        avg_top1 = float(avg_top1/nCnt)
+        avg_top5= float(avg_top5/nCnt)
         print('Test Epoch:{} Top1_acc_val:{:.2f}% Top5_acc_val:{:.2f}% '.format(epoch, avg_top1, avg_top5))
     return avg_top1, avg_top5
 
-            
+
 if __name__ == '__main__':
     main()
-            
