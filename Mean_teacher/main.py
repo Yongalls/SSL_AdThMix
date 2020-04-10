@@ -65,6 +65,48 @@ def split_ids(path, ratio):
 
     return train_ids, val_ids, ids_u
 
+### NSML functions
+def _infer(model, root_path, test_loader=None):
+    if test_loader is None:
+        test_loader = torch.utils.data.DataLoader(
+            SimpleImageLoader(root_path, 'test',
+                               transform=transforms.Compose([
+                                   transforms.Resize(opts.imResize),
+                                   transforms.CenterCrop(opts.imsize),
+                                   transforms.ToTensor(),
+                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                               ])), batch_size=opts.batchsize, shuffle=False, num_workers=4, pin_memory=True)
+        print('loaded {} test images'.format(len(test_loader.dataset)))
+
+    outputs = []
+    s_t = time.time()
+    for idx, image in enumerate(test_loader):
+        if torch.cuda.is_available():
+            image = image.cuda()
+        _, probs = model(image)
+        output = torch.argmax(probs, dim=1)
+        output = output.detach().cpu().numpy()
+        outputs.append(output)
+
+    outputs = np.concatenate(outputs)
+    return outputs
+
+def bind_nsml(model):
+    def save(dir_name, *args, **kwargs):
+        os.makedirs(dir_name, exist_ok=True)
+        state = model.state_dict()
+        torch.save(state, os.path.join(dir_name, 'model.pt'))
+        print('saved')
+
+    def load(dir_name, *args, **kwargs):
+        state = torch.load(os.path.join(dir_name, 'model.pt'))
+        model.load_state_dict(state)
+        print('loaded')
+
+    def infer(root_path):
+        return _infer(model, root_path)
+
+    nsml.bind(save=save, load=load, infer=infer)
 
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
 parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
@@ -73,7 +115,7 @@ parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=200, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=20, type=int, help='batchsize')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
@@ -93,7 +135,7 @@ parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 
 ### DO NOT MODIFY THIS BLOCK ###
-# arguments for nsml 
+# arguments for nsml
 parser.add_argument('--pause', type=int, default=0)
 parser.add_argument('--mode', type=str, default='train')
 ################################
@@ -122,6 +164,8 @@ def main(context):
     else:
         print("Currently using CPU (GPU is highly recommended)")
 
+
+
     checkpoint_path = context.transient_dir
     training_log = context.create_train_log("training")
     validation_log = context.create_train_log("validation")
@@ -140,7 +184,7 @@ def main(context):
                                   transforms.ToTensor(),
                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
                                 batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-    
+
     print('train_loader done')
 
     def create_model(ema=False):
@@ -169,6 +213,17 @@ def main(context):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay,
                                 nesterov=args.nesterov)
+    if use_gpu:
+        model.cuda()
+        ema_model.cuda()
+
+    ### DO NOT MODIFY THIS BLOCK ###
+    if IS_ON_NSML:
+        bind_nsml(model)
+        bind_nsml(ema_model)
+        if opts.pause:
+            nsml.paused(scope=locals())
+    ################################
 
     # optionally resume from a checkpoint
     if args.resume:
