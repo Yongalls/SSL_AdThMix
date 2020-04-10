@@ -44,26 +44,21 @@ global_step = 0
 
 def split_ids(path, ratio):
     with open(path) as f:
-        ids_l = []
-        ids_u = []
+        ids_t = []
         for i, line in enumerate(f.readlines()):
             if i == 0 or line == '' or line == '\n':
                 continue
             line = line.replace('\n', '').split('\t')
-            if int(line[1]) >= 0:
-                ids_l.append(int(line[0]))
-            else:
-                ids_u.append(int(line[0]))
+            ids_t.append(int(line[0]))
 
-    ids_l = np.array(ids_l)
-    ids_u = np.array(ids_u)
+    ids_t = np.array(ids_t)
 
-    perm = np.random.permutation(np.arange(len(ids_l)))
-    cut = int(ratio*len(ids_l))
-    train_ids = ids_l[perm][cut:]
-    val_ids = ids_l[perm][:cut]
+    perm = np.random.permutation(np.arange(len(ids_t)))
+    cut = int(ratio*len(ids_t))
+    train_ids = ids_t[perm][cut:]
+    val_ids = ids_t[perm][:cut]
 
-    return train_ids, val_ids, ids_u
+    return train_ids, val_ids
 
 ### NSML functions
 def _infer(model, root_path, test_loader=None):
@@ -171,9 +166,8 @@ def main(context):
     validation_log = context.create_train_log("validation")
     ema_validation_log = context.create_train_log("ema_validation")
 
-    #train_loader, eval_loader = create_data_loaders(**dataset_config, args=args)
+    train_ids, val_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
 
-    train_ids, val_ids, unl_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
     train_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'train', train_ids,
                               transform=transforms.Compose([
@@ -184,8 +178,18 @@ def main(context):
                                   transforms.ToTensor(),
                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
                                 batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-
     print('train_loader done')
+
+    eval_loader = torch.utils.data.DataLoader(
+            SimpleImageLoader(DATASET_PATH, 'val', val_ids,
+                               transform=transforms.Compose([
+                                   transforms.Resize(opts.imResize),
+                                   transforms.CenterCrop(opts.imsize),
+                                   transforms.ToTensor(),
+                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
+                               batch_size=opts.batchsize, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
+    print('validation_loader done')
+
 
     def create_model(ema=False):
         LOG.info("=> creating {pretrained}{ema}model '{arch}'".format(

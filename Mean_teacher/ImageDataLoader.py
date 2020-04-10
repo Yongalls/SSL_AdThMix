@@ -41,8 +41,7 @@ class SimpleImageLoader(torch.utils.data.Dataset):
                 if (ids is None) or (int(instance_id) in ids):
                     if os.path.exists(os.path.join(self.impath, file_name)):
                         imnames.append(file_name)
-                        if split == 'train' or split == 'val':
-                            imclasses.append(int(label))
+                        imclasses.append(int(label))
 
         self.transform = transform
         self.TransformTwice = TransformTwice(transform)
@@ -60,10 +59,20 @@ class SimpleImageLoader(torch.utils.data.Dataset):
             if self.transform is not None:
                 img = self.transform(img)
             return img
-        else:
+        elif self.split == "train":
+            if self.transform is not None:
+                img1, img2 = self.TransformTwice(img)
             label = self.imclasses[index]
-            img1, img2 = self.TransformTwice(img)
             return (img1,img2), label
+        elif self.split == "val":
+            if self.transform is not None:
+                img = self.transform(img)
+            label = self.imclasses[index]
+            return img, label
+        else:
+            print("error")
+
+
 
 
     def __len__(self):
