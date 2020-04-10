@@ -34,8 +34,6 @@ class SimpleImageLoader(torch.utils.data.Dataset):
                 if i == 0:
                     continue
                 instance_id, label, file_name = line.strip().split()
-                if int(label) == -1 and (split != 'unlabel' and split != 'test'):
-                    continue
                 if int(label) != -1 and (split == 'unlabel' or split == 'test'):
                     continue
                 if (ids is None) or (int(instance_id) in ids):
@@ -49,7 +47,7 @@ class SimpleImageLoader(torch.utils.data.Dataset):
         self.split = split
         self.imnames = imnames
         self.imclasses = imclasses
-        
+
 
     def __getitem__(self, index):
         filename = self.imnames[index]

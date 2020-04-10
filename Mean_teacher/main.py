@@ -44,19 +44,28 @@ global_step = 0
 
 def split_ids(path, ratio):
     with open(path) as f:
-        ids_t = []
+        ids_l = []
+        ids_u = []
         for i, line in enumerate(f.readlines()):
             if i == 0 or line == '' or line == '\n':
                 continue
             line = line.replace('\n', '').split('\t')
-            ids_t.append(int(line[0]))
+            if int(line[1]) >= 0:
+                ids_l.append(int(line[0]))
+            else:
+                ids_u.append(int(line[0]))
 
-    ids_t = np.array(ids_t)
+    ids_l = np.array(ids_l)
+    ids_u = np.array(ids_u)
 
-    perm = np.random.permutation(np.arange(len(ids_t)))
-    cut = int(ratio*len(ids_t))
-    train_ids = ids_t[perm][cut:]
-    val_ids = ids_t[perm][:cut]
+    perm = np.random.permutation(np.arange(len(ids_l)))
+    cut = int(ratio*len(ids_l))
+    val_ids = ids_l[perm][:cut]
+
+    temp = ids_l[perm][cut:]
+    ids_t = np.concatenate((temp, ids_u))
+    perm2 = np.random.permutation(np.arange(len(ids_t)))
+    train_ids = ids_t[perm2]
 
     return train_ids, val_ids
 
@@ -167,7 +176,7 @@ def main(context):
     ema_validation_log = context.create_train_log("ema_validation")
 
     train_ids, val_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
-
+    print('found {} train+unlabeled, {} validation images'.format(len(train_ids), len(val_ids)))
     train_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'train', train_ids,
                               transform=transforms.Compose([
