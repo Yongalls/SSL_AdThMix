@@ -51,7 +51,7 @@ def top_n_accuracy_score(y_true, y_prob, n=5, normalize=True):
         return counter * 1.0 / num_obs
     else:
         return counter
-        
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self):
@@ -66,20 +66,20 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-        
+
 def adjust_learning_rate(opts, optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
     lr = opts.lr * (0.1 ** (epoch // 30))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-        
+
 def linear_rampup(current, rampup_length):
     if rampup_length == 0:
         return 1.0
     else:
         current = np.clip(current / rampup_length, 0.0, 1.0)
         return float(current)
-        
+
 class SemiLoss(object):
     def __call__(self, outputs_x, targets_x, outputs_u, targets_u, epoch, final_epoch):
         probs_u = torch.softmax(outputs_u, dim=1)
@@ -204,7 +204,7 @@ parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 
 ### DO NOT MODIFY THIS BLOCK ###
-# arguments for nsml 
+# arguments for nsml
 parser.add_argument('--pause', type=int, default=0)
 parser.add_argument('--mode', type=str, default='train')
 ################################
@@ -276,7 +276,7 @@ def main():
                                   transforms.ToTensor(),
                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
                                 batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-        print('unlabel_loader done')    
+        print('unlabel_loader done')
 
         validation_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'val', val_ids,
@@ -297,7 +297,7 @@ def main():
         # INSTANTIATE STEP LEARNING SCHEDULER CLASS
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
 
-        # Train and Validation 
+        # Train and Validation
         best_acc = -1
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
@@ -308,6 +308,7 @@ def main():
             acc_top1, acc_top5 = validation(opts, validation_loader, model, epoch, use_gpu)
             is_best = acc_top1 > best_acc
             best_acc = max(acc_top1, best_acc)
+            nsml.report(summary=True, train_loss= loss, val_acc_top1= acc_top1, val_acc_top5=acc_top5, step=epoch)
             if is_best:
                 print('saving best checkpoint...')
                 if IS_ON_NSML:
@@ -320,7 +321,7 @@ def main():
                 else:
                     torch.save(model.state_dict(), os.path.join('runs', opts.name + '_e{}'.format(epoch)))
 
-                
+
 def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, use_gpu):
     losses = AverageMeter()
     losses_x = AverageMeter()
@@ -331,41 +332,41 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     avg_loss = 0.0
     avg_top1 = 0.0
     avg_top5 = 0.0
-    
+
     model.train()
-    
-    nCnt =0 
+
+    nCnt =0
     labeled_train_iter = iter(train_loader)
     unlabeled_train_iter = iter(unlabel_loader)
-    
+
     for batch_idx in range(len(train_loader)):
         try:
             data = labeled_train_iter.next()
             inputs_x, targets_x = data
         except:
-            labeled_train_iter = iter(train_loader)       
+            labeled_train_iter = iter(train_loader)
             data = labeled_train_iter.next()
             inputs_x, targets_x = data
         try:
             data = unlabeled_train_iter.next()
             inputs_u1, inputs_u2 = data
         except:
-            unlabeled_train_iter = iter(unlabel_loader)       
+            unlabeled_train_iter = iter(unlabel_loader)
             data = unlabeled_train_iter.next()
-            inputs_u1, inputs_u2 = data         
-    
+            inputs_u1, inputs_u2 = data
+
         batch_size = inputs_x.size(0)
         # Transform label to one-hot
-        classno = NUM_CLASSES 
+        classno = NUM_CLASSES
         targets_org = targets_x
-        targets_x = torch.zeros(batch_size, classno).scatter_(1, targets_x.view(-1,1), 1)        
-        
+        targets_x = torch.zeros(batch_size, classno).scatter_(1, targets_x.view(-1,1), 1)
+
         if use_gpu :
             inputs_x, targets_x = inputs_x.cuda(), targets_x.cuda()
-            inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()    
+            inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()
         inputs_x, targets_x = Variable(inputs_x), Variable(targets_x)
         inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
-        
+
         with torch.no_grad():
             # compute guessed labels of unlabel samples
             embed_u1, pred_u1 = model(inputs_u1)
@@ -374,37 +375,37 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             pt = pred_u_all**(1/opts.T)
             targets_u = pt / pt.sum(dim=1, keepdim=True)
             targets_u = targets_u.detach()
-            
+
         # mixup
         all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2], dim=0)
-        all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)            
-        
-        lamda = np.random.beta(opts.alpha, opts.alpha)        
-        lamda= max(lamda, 1-lamda)    
+        all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)
+
+        lamda = np.random.beta(opts.alpha, opts.alpha)
+        lamda= max(lamda, 1-lamda)
         newidx = torch.randperm(all_inputs.size(0))
         input_a, input_b = all_inputs, all_inputs[newidx]
-        target_a, target_b = all_targets, all_targets[newidx]        
-        
+        target_a, target_b = all_targets, all_targets[newidx]
+
         mixed_input = lamda * input_a + (1 - lamda) * input_b
         mixed_target = lamda * target_a + (1 - lamda) * target_b
-        
-        # interleave labeled and unlabed samples between batches to get correct batchnorm calculation 
+
+        # interleave labeled and unlabed samples between batches to get correct batchnorm calculation
         mixed_input = list(torch.split(mixed_input, batch_size))
         mixed_input = interleave(mixed_input, batch_size)
 
         optimizer.zero_grad()
-        
+
         fea, logits_temp = model(mixed_input[0])
         logits = [logits_temp]
         for newinput in mixed_input[1:]:
             fea, logits_temp = model(newinput)
-            logits.append(logits_temp)        
-            
+            logits.append(logits_temp)
+
         # put interleaved samples back
         logits = interleave(logits, batch_size)
         logits_x = logits[0]
-        logits_u = torch.cat(logits[1:], dim=0)            
-        
+        logits_u = torch.cat(logits[1:], dim=0)
+
         loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
         loss = loss_x + weigts_mixing * loss_un
 
@@ -412,42 +413,42 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         losses_x.update(loss_x.item(), inputs_x.size(0))
         losses_un.update(loss_un.item(), inputs_x.size(0))
         weight_scale.update(weigts_mixing, inputs_x.size(0))
-                
+
         # compute gradient and do SGD step
         loss.backward()
         optimizer.step()
-        
+
         with torch.no_grad():
             # compute guessed labels of unlabel samples
             embed_x, pred_x1 = model(inputs_x)
 
         acc_top1b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=1)*100
-        acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100    
-        acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))        
-        acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))   
-        
+        acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100
+        acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))
+        acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))
+
         avg_loss += loss.item()
         avg_top1 += acc_top1b
-        avg_top5 += acc_top5b  
-        
+        avg_top5 += acc_top5b
+
         if batch_idx % opts.log_interval == 0:
-            print('Train Epoch:{} [{}/{}] Loss:{:.4f}({:.4f}) Top-1:{:.2f}%({:.2f}%) Top-5:{:.2f}%({:.2f}%) '.format( 
+            print('Train Epoch:{} [{}/{}] Loss:{:.4f}({:.4f}) Top-1:{:.2f}%({:.2f}%) Top-5:{:.2f}%({:.2f}%) '.format(
                 epoch, batch_idx *inputs_x.size(0), len(train_loader.dataset), losses.val, losses.avg, acc_top1.val, acc_top1.avg, acc_top5.val, acc_top5.avg))
-        
-        nCnt += 1 
-        
+
+        nCnt += 1
+
     avg_loss =  float(avg_loss/nCnt)
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
-    
-    return  avg_loss, avg_top1, avg_top5    
+
+    return  avg_loss, avg_top1, avg_top5
 
 
 def validation(opts, validation_loader, model, epoch, use_gpu):
     model.eval()
     avg_top1= 0.0
     avg_top5 = 0.0
-    nCnt =0 
+    nCnt =0
     with torch.no_grad():
         for batch_idx, data in enumerate(validation_loader):
             inputs, labels = data
@@ -462,8 +463,8 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
             avg_top1 += acc_top1
             avg_top5 += acc_top5
 
-        avg_top1 = float(avg_top1/nCnt)   
-        avg_top5= float(avg_top5/nCnt)   
+        avg_top1 = float(avg_top1/nCnt)
+        avg_top5= float(avg_top5/nCnt)
         print('Test Epoch:{} Top1_acc_val:{:.2f}% Top5_acc_val:{:.2f}% '.format(epoch, avg_top1, avg_top5))
     return avg_top1, avg_top5
 
@@ -471,4 +472,3 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
 
 if __name__ == '__main__':
     main()
-

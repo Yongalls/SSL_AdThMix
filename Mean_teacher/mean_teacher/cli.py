@@ -19,7 +19,7 @@ __all__ = ['parse_cmd_args', 'parse_dict_args']
 
 def create_parser():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-    
+
     parser.add_argument('--exclude-unlabeled', default=False, type=str2bool, metavar='BOOL',
                         help='exclude unlabeled examples from the training set')
     parser.add_argument('--arch', '-a', metavar='ARCH', default='resnext152',
@@ -65,14 +65,14 @@ def create_parser():
                         help='evaluate model on evaluation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    
+
     parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
     parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train (default: 200)')
 
     # basic settings
     parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
     parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-    parser.add_argument('--batchsize', default=20, type=int, help='batchsize')
+    parser.add_argument('--batchsize', default=40, type=int, help='batchsize')
     parser.add_argument('--seed', type=int, default=123, help='random seed')
 
     # basic hyper-parameters

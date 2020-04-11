@@ -73,7 +73,7 @@ def split_ids(path, ratio):
                 continue
             line = line.replace('\n', '').split('\t')
             if int(line[1]) >= 0:
-                ids_l.append(int(line[0]))
+                ids_l.append(int(line[0])+39963)
             else:
                 ids_u.append(int(line[0]))
 
@@ -146,8 +146,11 @@ def main(context):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    print(torch.cuda.device_count())
+
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids
     use_gpu = torch.cuda.is_available()
+
     if use_gpu:
         args.cuda = 1
         print("Currently using GPU {}".format(args.gpu_ids))
@@ -157,12 +160,12 @@ def main(context):
         print("Currently using CPU (GPU is highly recommended)")
 
 
-
     checkpoint_path = context.transient_dir
     training_log = context.create_train_log("training")
     validation_log = context.create_train_log("validation")
     ema_validation_log = context.create_train_log("ema_validation")
 
+    print("before split ids")
     train_ids, val_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
     print('found {} train+unlabeled, {} validation images'.format(len(train_ids), len(val_ids)))
     train_loader = torch.utils.data.DataLoader(
@@ -187,7 +190,8 @@ def main(context):
                                batch_size=args.batchsize, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
     print('validation_loader done')
 
-
+    print(len(train_loader))
+    print(len(eval_loader))
     def create_model(ema=False):
         LOG.info("=> creating {pretrained}{ema}model '{arch}'".format(
             pretrained='pre-trained ' if args.pretrained else '',
@@ -205,8 +209,8 @@ def main(context):
 
         return model
 
-    model = create_model()
-    ema_model = create_model(ema=True)
+    model = nn.DataParallel(create_model())
+    ema_model = nn.DataParallel(create_model(ema=True))
 
     LOG.info(parameters_string(model))
 
@@ -254,7 +258,6 @@ def main(context):
         # train for one epoch
         train(train_loader, model, ema_model, optimizer, epoch, training_log)
         LOG.info("--- training epoch in %s seconds ---" % (time.time() - start_time))
-        #nsml.report(summary=True, train_class_loss= class_loss.data[0], train_cons_loss= consistency_loss, step = epoch)
 
         start_time = time.time()
         LOG.info("Evaluating the primary model:")
@@ -265,7 +268,8 @@ def main(context):
         is_best = ema_prec1 > best_prec1
         best_prec1 = max(ema_prec1, best_prec1)
 
-        
+
+
 
 
 def train(train_loader, model, ema_model, optimizer, epoch, log):
@@ -300,7 +304,8 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
 
         minibatch_size = len(target_var)
         labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum()
-        #assert labeled_minibatch_size > 0
+        assert labeled_minibatch_size > 0
+        #print("labeled_minibatch_size: {}, minibatch_size: {}".format(labeled_minibatch_size, minibatch_size))
         meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
         ema_model_out = ema_model(ema_input_var)
@@ -385,6 +390,8 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
                 **meters.sums()
             })
 
+    nsml.report(summary=True, train_loss= meters['loss'].val, step = epoch)
+
 
 def validate(eval_loader, model, log, global_step, epoch):
     class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
@@ -402,7 +409,8 @@ def validate(eval_loader, model, log, global_step, epoch):
 
         minibatch_size = len(target_var)
         labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum()
-        #assert labeled_minibatch_size > 0
+        assert labeled_minibatch_size == minibatch_size
+        assert labeled_minibatch_size > 0
         meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
         # compute output
@@ -422,10 +430,10 @@ def validate(eval_loader, model, log, global_step, epoch):
         meters.update('batch_time', time.time() - end)
         end = time.time()
 
-        if i % 10 == 0:
-            nsml.report(summary=True, 
-                val_class_loss= class_loss.data[0],
-                step = global_step)
+        # if i % 10 == 0:
+        #     nsml.report(summary=True,
+        #         val_class_loss= class_loss.data[0],
+        #         step = global_step)
 
         if i % args.print_freq == 0:
             LOG.info(
@@ -436,7 +444,7 @@ def validate(eval_loader, model, log, global_step, epoch):
                 'Prec@1 {meters[top1]:.3f}\t'
                 'Prec@5 {meters[top5]:.3f}'.format(
                     i, len(eval_loader), meters=meters))
-            
+
     LOG.info(' * Prec@1 {top1.avg:.3f}\tPrec@5 {top5.avg:.3f}'
           .format(top1=meters['top1'], top5=meters['top5']))
     log.record(epoch, {
@@ -446,6 +454,7 @@ def validate(eval_loader, model, log, global_step, epoch):
         **meters.sums()
     })
 
+    nsml.report(summary=True, val_acc_top1= meters['top1'].val, val_acc_top5=meters['top5'].val, step = epoch)
     return meters['top1'].avg
 
 

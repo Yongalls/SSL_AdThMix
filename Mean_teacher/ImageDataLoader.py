@@ -29,24 +29,49 @@ class SimpleImageLoader(torch.utils.data.Dataset):
         imnames = []
         imclasses = []
 
-        with open(meta_file, 'r') as rf:
-            for i, line in enumerate(rf):
-                if i == 0:
-                    continue
-                instance_id, label, file_name = line.strip().split()
-                if int(label) != -1 and (split == 'unlabel' or split == 'test'):
-                    continue
-                if (ids is None) or (int(instance_id) in ids):
-                    if os.path.exists(os.path.join(self.impath, file_name)):
-                        imnames.append(file_name)
-                        imclasses.append(int(label))
+        if split=='train':
+            with open(meta_file, 'r') as rf:
+                for i, line in enumerate(rf):
+                    if i == 0:
+                        continue
+                    instance_id, label, file_name = line.strip().split()
+                    if int(label)==-1 and int(instance_id) in ids:
+                        if os.path.exists(os.path.join(self.impath, file_name)):
+                            imnames.append(file_name)
+                            imclasses.append(int(label))
+                    if int(label)!=-1 and int(instance_id)+39963 in ids:
+                        if os.path.exists(os.path.join(self.impath, file_name)):
+                            imnames.append(file_name)
+                            imclasses.append(int(label))
 
-        self.transform = transform
-        self.TransformTwice = TransformTwice(transform)
-        self.loader = loader
-        self.split = split
-        self.imnames = imnames
-        self.imclasses = imclasses
+            self.transform = transform
+            self.TransformTwice = TransformTwice(transform)
+            self.loader = loader
+            self.split = split
+            self.imnames = imnames
+            self.imclasses = imclasses
+
+        elif split=='val':
+            with open(meta_file, 'r') as rf:
+                for i, line in enumerate(rf):
+                    if i == 0:
+                        continue
+                    instance_id, label, file_name = line.strip().split()
+                    if int(label)==-1:
+                        continue
+                    if (int(instance_id)+39963 in ids):
+                        if os.path.exists(os.path.join(self.impath, file_name)):
+                            imnames.append(file_name)
+                            imclasses.append(int(label))
+
+            self.transform = transform
+            self.TransformTwice = TransformTwice(transform)
+            self.loader = loader
+            self.split = split
+            self.imnames = imnames
+            self.imclasses = imclasses
+        else:
+            assert 0>1
 
 
     def __getitem__(self, index):
@@ -66,6 +91,7 @@ class SimpleImageLoader(torch.utils.data.Dataset):
             if self.transform is not None:
                 img = self.transform(img)
             label = self.imclasses[index]
+            assert label>=0
             return img, label
         else:
             print("error")
