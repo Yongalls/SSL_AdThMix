@@ -19,17 +19,7 @@ __all__ = ['parse_cmd_args', 'parse_dict_args']
 
 def create_parser():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-    parser.add_argument('--dataset', metavar='DATASET', default='imagenet',
-                        choices=datasets.__all__,
-                        help='dataset: ' +
-                            ' | '.join(datasets.__all__) +
-                            ' (default: imagenet)')
-    parser.add_argument('--train-subdir', type=str, default='train',
-                        help='the subdirectory inside the data directory that contains the training data')
-    parser.add_argument('--eval-subdir', type=str, default='val',
-                        help='the subdirectory inside the data directory that contains the evaluation data')
-    parser.add_argument('--labels', default=None, type=str, metavar='FILE',
-                        help='list of image labels (default: based on directory structure)')
+    
     parser.add_argument('--exclude-unlabeled', default=False, type=str2bool, metavar='BOOL',
                         help='exclude unlabeled examples from the training set')
     parser.add_argument('--arch', '-a', metavar='ARCH', default='resnext152',
@@ -38,12 +28,8 @@ def create_parser():
                             ' | '.join(architectures.__all__))
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
-                        help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=256, type=int,
-                        metavar='N', help='mini-batch size (default: 256)')
     parser.add_argument('--labeled-batch-size', default=None, type=int,
                         metavar='N', help="labeled examples per minibatch (default: no constrain)")
     parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
@@ -62,19 +48,15 @@ def create_parser():
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--ema-decay', default=0.999, type=float, metavar='ALPHA',
                         help='ema variable decay rate (default: 0.999)')
-    parser.add_argument('--consistency', default=None, type=float, metavar='WEIGHT',
+    parser.add_argument('--consistency', default=100, type=float, metavar='WEIGHT',
                         help='use consistency loss with given weight (default: None)')
     parser.add_argument('--consistency-type', default="mse", type=str, metavar='TYPE',
                         choices=['mse', 'kl'],
                         help='consistency loss type to use')
-    parser.add_argument('--consistency-rampup', default=30, type=int, metavar='EPOCHS',
+    parser.add_argument('--consistency-rampup', default=5, type=int, metavar='EPOCHS',
                         help='length of the consistency loss ramp-up')
     parser.add_argument('--logit-distance-cost', default=-1, type=float, metavar='WEIGHT',
                         help='let the student model have two outputs and use an MSE loss between the logits with the given weight (default: only have one output)')
-    parser.add_argument('--checkpoint-epochs', default=1, type=int,
-                        metavar='EPOCHS', help='checkpoint frequency in epochs, 0 to turn checkpointing off (default: 1)')
-    parser.add_argument('--evaluation-epochs', default=1, type=int,
-                        metavar='EPOCHS', help='evaluation frequency in epochs, 0 to turn evaluation off (default: 1)')
     parser.add_argument('--print-freq', '-p', default=100, type=int,
                         metavar='N', help='print frequency (default: 10)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
@@ -83,6 +65,35 @@ def create_parser():
                         help='evaluate model on evaluation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
+    
+    parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
+    parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train (default: 200)')
+
+    # basic settings
+    parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
+    parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+    parser.add_argument('--batchsize', default=20, type=int, help='batchsize')
+    parser.add_argument('--seed', type=int, default=123, help='random seed')
+
+    # basic hyper-parameters
+    parser.add_argument('--imResize', default=256, type=int, help='')
+    parser.add_argument('--imsize', default=224, type=int, help='')
+    parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
+
+    # arguments for logging and backup
+    parser.add_argument('--log_interval', type=int, default=10, metavar='N', help='logging training status')
+    parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch interval')
+
+    # hyper-parameters for mix-match
+    parser.add_argument('--alpha', default=0.75, type=float)
+    parser.add_argument('--lambda-u', default=75, type=float)
+    parser.add_argument('--T', default=0.5, type=float)
+
+    ### DO NOT MODIFY THIS BLOCK ###
+    # arguments for nsml
+    parser.add_argument('--pause', type=int, default=0)
+    parser.add_argument('--mode', type=str, default='train')
+    ################################
     return parser
 
 

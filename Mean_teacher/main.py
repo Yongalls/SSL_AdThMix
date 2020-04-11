@@ -42,6 +42,28 @@ best_prec1 = 0
 global_step = 0
 
 
+def parse_dict_args(**kwargs):
+    global args
+
+    def to_cmdline_kwarg(key, value):
+        if len(key) == 1:
+            key = "-{}".format(key)
+        else:
+            key = "--{}".format(re.sub(r"_", "-", key))
+        value = str(value)
+        return key, value
+
+    kwargs_pairs = (to_cmdline_kwarg(key, value)
+                    for key, value in kwargs.items())
+    cmdline_args = list(sum(kwargs_pairs, ()))
+    args = parser.parse_args(cmdline_args)
+
+def update_ema_variables(model, ema_model, alpha, global_step):
+    # Use the true average until the exponential average is more correct
+    alpha = min(1 - 1 / (global_step + 1), alpha)
+    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+        ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
+
 def split_ids(path, ratio):
     with open(path) as f:
         ids_l = []
@@ -75,11 +97,11 @@ def _infer(model, root_path, test_loader=None):
         test_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(root_path, 'test',
                                transform=transforms.Compose([
-                                   transforms.Resize(opts.imResize),
-                                   transforms.CenterCrop(opts.imsize),
+                                   transforms.Resize(args.imResize),
+                                   transforms.CenterCrop(args.imsize),
                                    transforms.ToTensor(),
                                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-                               ])), batch_size=opts.batchsize, shuffle=False, num_workers=4, pin_memory=True)
+                               ])), batch_size=args.batchsize, shuffle=False, num_workers=4, pin_memory=True)
         print('loaded {} test images'.format(len(test_loader.dataset)))
 
     outputs = []
@@ -112,57 +134,23 @@ def bind_nsml(model):
 
     nsml.bind(save=save, load=load, infer=infer)
 
-parser = argparse.ArgumentParser(description='Sample Product200K Training')
-parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train (default: 200)')
-
-# basic settings
-parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
-parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=20, type=int, help='batchsize')
-parser.add_argument('--seed', type=int, default=123, help='random seed')
-
-# basic hyper-parameters
-parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
-parser.add_argument('--lr', type=float, default=1e-3, metavar='LR', help='learning rate (default: 5e-5)')
-parser.add_argument('--imResize', default=256, type=int, help='')
-parser.add_argument('--imsize', default=224, type=int, help='')
-parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
-
-# arguments for logging and backup
-parser.add_argument('--log_interval', type=int, default=10, metavar='N', help='logging training status')
-parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch interval')
-
-# hyper-parameters for mix-match
-parser.add_argument('--alpha', default=0.75, type=float)
-parser.add_argument('--lambda-u', default=75, type=float)
-parser.add_argument('--T', default=0.5, type=float)
-
-### DO NOT MODIFY THIS BLOCK ###
-# arguments for nsml
-parser.add_argument('--pause', type=int, default=0)
-parser.add_argument('--mode', type=str, default='train')
-################################
-
 
 def main(context):
     global global_step
     global best_prec1
-    global opts
-    opts = parser.parse_args()
-    opts.cuda = 0
+    args.cuda = 0
 
     # Set GPU
-    seed = opts.seed
+    seed = args.seed
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids
     use_gpu = torch.cuda.is_available()
     if use_gpu:
-        opts.cuda = 1
-        print("Currently using GPU {}".format(opts.gpu_ids))
+        args.cuda = 1
+        print("Currently using GPU {}".format(args.gpu_ids))
         cudnn.benchmark = True
         torch.cuda.manual_seed_all(seed)
     else:
@@ -180,23 +168,23 @@ def main(context):
     train_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'train', train_ids,
                               transform=transforms.Compose([
-                                  transforms.Resize(opts.imResize),
-                                  transforms.RandomResizedCrop(opts.imsize),
+                                  transforms.Resize(args.imResize),
+                                  transforms.RandomResizedCrop(args.imsize),
                                   transforms.RandomHorizontalFlip(),
                                   transforms.RandomVerticalFlip(),
                                   transforms.ToTensor(),
                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
-                                batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
+                                batch_size=args.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
     print('train_loader done')
 
     eval_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'val', val_ids,
                                transform=transforms.Compose([
-                                   transforms.Resize(opts.imResize),
-                                   transforms.CenterCrop(opts.imsize),
+                                   transforms.Resize(args.imResize),
+                                   transforms.CenterCrop(args.imsize),
                                    transforms.ToTensor(),
                                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
-                               batch_size=opts.batchsize, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
+                               batch_size=args.batchsize, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
     print('validation_loader done')
 
 
@@ -234,7 +222,7 @@ def main(context):
     if IS_ON_NSML:
         bind_nsml(model)
         bind_nsml(ema_model)
-        if opts.pause:
+        if args.pause:
             nsml.paused(scope=locals())
     ################################
 
@@ -260,61 +248,24 @@ def main(context):
         validate(eval_loader, ema_model, ema_validation_log, global_step, args.start_epoch)
         return
 
+
     for epoch in range(args.start_epoch, args.epochs):
         start_time = time.time()
         # train for one epoch
         train(train_loader, model, ema_model, optimizer, epoch, training_log)
         LOG.info("--- training epoch in %s seconds ---" % (time.time() - start_time))
+        #nsml.report(summary=True, train_class_loss= class_loss.data[0], train_cons_loss= consistency_loss, step = epoch)
 
-        if args.evaluation_epochs and (epoch + 1) % args.evaluation_epochs == 0:
-            start_time = time.time()
-            LOG.info("Evaluating the primary model:")
-            prec1 = validate(eval_loader, model, validation_log, global_step, epoch + 1)
-            LOG.info("Evaluating the EMA model:")
-            ema_prec1 = validate(eval_loader, ema_model, ema_validation_log, global_step, epoch + 1)
-            LOG.info("--- validation in %s seconds ---" % (time.time() - start_time))
-            is_best = ema_prec1 > best_prec1
-            best_prec1 = max(ema_prec1, best_prec1)
-        else:
-            is_best = False
+        start_time = time.time()
+        LOG.info("Evaluating the primary model:")
+        prec1 = validate(eval_loader, model, validation_log, global_step, epoch + 1)
+        LOG.info("Evaluating the EMA model:")
+        ema_prec1 = validate(eval_loader, ema_model, ema_validation_log, global_step, epoch + 1)
+        LOG.info("--- validation in %s seconds ---" % (time.time() - start_time))
+        is_best = ema_prec1 > best_prec1
+        best_prec1 = max(ema_prec1, best_prec1)
 
-        if args.checkpoint_epochs and (epoch + 1) % args.checkpoint_epochs == 0:
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'global_step': global_step,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'ema_state_dict': ema_model.state_dict(),
-                'best_prec1': best_prec1,
-                'optimizer' : optimizer.state_dict(),
-            }, is_best, checkpoint_path, epoch + 1)
-
-
-def parse_dict_args(**kwargs):
-    global args
-
-    def to_cmdline_kwarg(key, value):
-        if len(key) == 1:
-            key = "-{}".format(key)
-        else:
-            key = "--{}".format(re.sub(r"_", "-", key))
-        value = str(value)
-        return key, value
-
-    kwargs_pairs = (to_cmdline_kwarg(key, value)
-                    for key, value in kwargs.items())
-    cmdline_args = list(sum(kwargs_pairs, ()))
-    args = parser.parse_args(cmdline_args)
-
-
-
-
-
-def update_ema_variables(model, ema_model, alpha, global_step):
-    # Use the true average until the exponential average is more correct
-    alpha = min(1 - 1 / (global_step + 1), alpha)
-    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
+        
 
 
 def train(train_loader, model, ema_model, optimizer, epoch, log):
@@ -349,7 +300,7 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
 
         minibatch_size = len(target_var)
         labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum()
-        assert labeled_minibatch_size > 0
+        #assert labeled_minibatch_size > 0
         meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
         ema_model_out = ema_model(ema_input_var)
@@ -451,7 +402,7 @@ def validate(eval_loader, model, log, global_step, epoch):
 
         minibatch_size = len(target_var)
         labeled_minibatch_size = target_var.data.ne(NO_LABEL).sum()
-        assert labeled_minibatch_size > 0
+        #assert labeled_minibatch_size > 0
         meters.update('labeled_minibatch_size', labeled_minibatch_size)
 
         # compute output
@@ -471,6 +422,11 @@ def validate(eval_loader, model, log, global_step, epoch):
         meters.update('batch_time', time.time() - end)
         end = time.time()
 
+        if i % 10 == 0:
+            nsml.report(summary=True, 
+                val_class_loss= class_loss.data[0],
+                step = global_step)
+
         if i % args.print_freq == 0:
             LOG.info(
                 'Test: [{0}/{1}]\t'
@@ -480,7 +436,7 @@ def validate(eval_loader, model, log, global_step, epoch):
                 'Prec@1 {meters[top1]:.3f}\t'
                 'Prec@5 {meters[top5]:.3f}'.format(
                     i, len(eval_loader), meters=meters))
-
+            
     LOG.info(' * Prec@1 {top1.avg:.3f}\tPrec@5 {top5.avg:.3f}'
           .format(top1=meters['top1'], top5=meters['top5']))
     log.record(epoch, {
@@ -491,17 +447,6 @@ def validate(eval_loader, model, log, global_step, epoch):
     })
 
     return meters['top1'].avg
-
-
-def save_checkpoint(state, is_best, dirpath, epoch):
-    filename = 'checkpoint.{}.ckpt'.format(epoch)
-    checkpoint_path = os.path.join(dirpath, filename)
-    best_path = os.path.join(dirpath, 'best.ckpt')
-    torch.save(state, checkpoint_path)
-    LOG.info("--- checkpoint saved to %s ---" % checkpoint_path)
-    if is_best:
-        shutil.copyfile(checkpoint_path, best_path)
-        LOG.info("--- checkpoint copied to %s ---" % best_path)
 
 
 def adjust_learning_rate(optimizer, epoch, step_in_epoch, total_steps_in_epoch):
