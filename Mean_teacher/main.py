@@ -389,9 +389,8 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
                 **meters.averages(),
                 **meters.sums()
             })
-        if i>=100:
-            break
-        
+
+
     nsml.report(summary=True, train_loss= meters['loss'].avg, step = epoch)
 
 

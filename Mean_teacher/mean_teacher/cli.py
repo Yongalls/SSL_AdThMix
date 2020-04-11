@@ -72,7 +72,7 @@ def create_parser():
     # basic settings
     parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
     parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-    parser.add_argument('--batchsize', default=40, type=int, help='batchsize')
+    parser.add_argument('--batchsize', default=50, type=int, help='batchsize')
     parser.add_argument('--seed', type=int, default=123, help='random seed')
 
     # basic hyper-parameters
