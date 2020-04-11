@@ -247,9 +247,9 @@ def main(context):
 
     if args.evaluate:
         LOG.info("Evaluating the primary model:")
-        validate(eval_loader, model, validation_log, global_step, args.start_epoch)
+        validate(eval_loader, model, validation_log, global_step, args.start_epoch, False)
         LOG.info("Evaluating the EMA model:")
-        validate(eval_loader, ema_model, ema_validation_log, global_step, args.start_epoch)
+        validate(eval_loader, ema_model, ema_validation_log, global_step, args.start_epoch, True)
         return
 
 
@@ -261,9 +261,9 @@ def main(context):
 
         start_time = time.time()
         LOG.info("Evaluating the primary model:")
-        prec1 = validate(eval_loader, model, validation_log, global_step, epoch + 1)
+        prec1 = validate(eval_loader, model, validation_log, global_step, epoch + 1, False)
         LOG.info("Evaluating the EMA model:")
-        ema_prec1 = validate(eval_loader, ema_model, ema_validation_log, global_step, epoch + 1)
+        ema_prec1 = validate(eval_loader, ema_model, ema_validation_log, global_step, epoch + 1, True)
         LOG.info("--- validation in %s seconds ---" % (time.time() - start_time))
         is_best = ema_prec1 > best_prec1
         best_prec1 = max(ema_prec1, best_prec1)
@@ -389,11 +389,13 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
                 **meters.averages(),
                 **meters.sums()
             })
+        if i>=100:
+            break
+        
+    nsml.report(summary=True, train_loss= meters['loss'].avg, step = epoch)
 
-    nsml.report(summary=True, train_loss= meters['loss'].val, step = epoch)
 
-
-def validate(eval_loader, model, log, global_step, epoch):
+def validate(eval_loader, model, log, global_step, epoch, is_ema):
     class_criterion = nn.CrossEntropyLoss(size_average=False, ignore_index=NO_LABEL).cuda()
     meters = AverageMeterSet()
 
@@ -454,7 +456,8 @@ def validate(eval_loader, model, log, global_step, epoch):
         **meters.sums()
     })
 
-    nsml.report(summary=True, val_acc_top1= meters['top1'].val, val_acc_top5=meters['top5'].val, step = epoch)
+    if is_ema:
+        nsml.report(summary=True, val_acc_top1= meters['top1'].avg, val_acc_top5=meters['top5'].avg, step = epoch)
     return meters['top1'].avg
 
 

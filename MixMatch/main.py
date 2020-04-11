@@ -220,6 +220,8 @@ def main():
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    print(torch.cuda.device_count())
+
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
     use_gpu = torch.cuda.is_available()
     if use_gpu:
