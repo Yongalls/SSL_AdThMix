@@ -347,6 +347,7 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
             meters.update('cons_loss', 0)
 
         loss = class_loss + consistency_loss + res_loss
+        nsml.report(summary=True, train_class_loss= meters['class_loss'].avg, ema_class_loss=meters['ema_class_loss'].avg, consistency_loss = meters['cons_loss'].avg, step = global_step)
         assert not (np.isnan(loss.data[0]) or loss.data[0] > 1e5), 'Loss explosion: {}'.format(loss.data[0])
         meters.update('loss', loss.data[0])
 
@@ -391,7 +392,7 @@ def train(train_loader, model, ema_model, optimizer, epoch, log):
             })
 
 
-    nsml.report(summary=True, train_loss= meters['loss'].avg, step = epoch)
+    nsml.report(summary=True, train_total_loss= meters['loss'].avg, train_acc_top1 = meters['top1'].avg, train_acc_top5 = meters['top5'].avg, step = epoch)
 
 
 def validate(eval_loader, model, log, global_step, epoch, is_ema):
@@ -456,7 +457,9 @@ def validate(eval_loader, model, log, global_step, epoch, is_ema):
     })
 
     if is_ema:
-        nsml.report(summary=True, val_acc_top1= meters['top1'].avg, val_acc_top5=meters['top5'].avg, step = epoch)
+        nsml.report(summary=True, val_ema_acc_top1= meters['top1'].avg, val_ema_acc_top5=meters['top5'].avg, step = epoch)
+    else:
+        nsml.report(summary=True, val_student_acc_top1= meters['top1'].avg, val_student_acc_top5=meters['top5'].avg, step = epoch)
     return meters['top1'].avg
 
 
