@@ -184,7 +184,7 @@ parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=200, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=30, type=int, help='batchsize')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
@@ -234,7 +234,7 @@ def main():
 
 
     # Set model
-    model = Res18_basic(NUM_CLASSES)
+    model = Res50(NUM_CLASSES)
     model.eval()
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())

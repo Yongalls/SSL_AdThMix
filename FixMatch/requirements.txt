@@ -1,0 +1,4 @@
+torch==1.4
+tqdm
+pytorch_metric_learning
+torchvision==0.5
