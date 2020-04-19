@@ -222,7 +222,7 @@ def main():
 
     print(torch.cuda.device_count())
 
-    ###Hyperparameter printing 
+    ###Hyperparameter printing
     print("Hyperparameters. lr: {}, batchsize: {}, alpha: {}, lambda_u: {}, T: {}".format(opts.lr, opts.batchsize, opts.alpha, opts.lambda_u, opts.T))
 
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
@@ -446,7 +446,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
 
-    nsml.report(summary=True, train_acc_top1= avg_top1, val_acc_top5=avg_top5, step=epoch)
+    nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch)
     return  avg_loss, avg_top1, avg_top5
 
 
