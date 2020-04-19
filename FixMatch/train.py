@@ -152,7 +152,7 @@ def main():
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int,
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('--batch-size', default=5, type=int,
+    parser.add_argument('--batch-size', default=15, type=int,
                         help='train batchsize')
     parser.add_argument('--lr', '--learning-rate', default=0.03, type=float,
                         help='initial learning rate')
@@ -193,7 +193,7 @@ def main():
 
     parser.add_argument('--imResize', default=256, type=int, help='')
     parser.add_argument('--imsize', default=224, type=int, help='')
-    parser.add_argument('--batchsize', default=5, type=int, help='batchsize')
+    parser.add_argument('--batchsize', default=15, type=int, help='batchsize')
     parser.add_argument('--num_classes', default=265, type=int, help='number of classes')
     parser.add_argument('--seedq', type=int, default=123, help='random seed')
     parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
@@ -261,8 +261,8 @@ def main():
     else:
         args.num_classes = 265
         if args.arch == 'wideresnet':
-            args.model_depth = 40
-            args.model_width = 4
+            args.model_depth = 28
+            args.model_width = 2
         if args.arch == 'resnext':
             args.model_cardinality = 8
             args.model_depth = 29
@@ -418,7 +418,7 @@ def main():
         else:
             test_model = model
 
-        test_loss, test_acc = test(args, test_loader, test_model, epoch)
+        test_loss, test_acc, top5_acc = test(args, test_loader, test_model, epoch)
 
         # if args.local_rank in [-1, 0]:
         #     writer.add_scalar('train/1.train_loss', train_loss, epoch)
@@ -451,6 +451,8 @@ def main():
         logger.info('Best top-1 acc: {:.2f}'.format(best_acc))
         logger.info('Mean top-1 acc: {:.2f}\n'.format(
             np.mean(test_accs[-20:])))
+        nsml.report(summary=True, train_loss= train_loss, val_acc_top1= test_acc, val_acc_top5=top5_acc, step=epoch)
+
 
     # if args.local_rank in [-1, 0]:
     #     writer.close()
@@ -599,7 +601,7 @@ def test(args, test_loader, model, epoch):
 
     # logger.info("top-1 acc: {:.2f}".format(top1.avg))
     # logger.info("top-5 acc: {:.2f}".format(top5.avg))
-    return losses.avg, top1.avg
+    return losses.avg, top1.avg, top5.avg
 
 
 class ModelEMA(object):

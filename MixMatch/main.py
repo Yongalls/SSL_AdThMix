@@ -27,9 +27,9 @@ import torch.nn.functional as F
 
 from ImageDataLoader import SimpleImageLoader
 from models import Res18, Res50, Dense121, Res18_basic
-
-from pytorch_metric_learning import miners
-from pytorch_metric_learning import losses as lossfunc
+#
+# from pytorch_metric_learning import miners
+# from pytorch_metric_learning import losses as lossfunc
 import glob
 
 import nsml
@@ -179,17 +179,17 @@ def bind_nsml(model):
 ######################################################################
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
 parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train (default: 200)')
+parser.add_argument('--epochs', type=int, default=250, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=30, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=50, type=int, help='batchsize')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
 parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
-parser.add_argument('--lr', type=float, default=1e-3, metavar='LR', help='learning rate (default: 5e-5)')
+parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-5)')
 parser.add_argument('--imResize', default=256, type=int, help='')
 parser.add_argument('--imsize', default=224, type=int, help='')
 parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
@@ -200,7 +200,7 @@ parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch int
 
 # hyper-parameters for mix-match
 parser.add_argument('--alpha', default=0.75, type=float)
-parser.add_argument('--lambda-u', default=75, type=float)
+parser.add_argument('--lambda-u', default=150, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 
 ### DO NOT MODIFY THIS BLOCK ###
@@ -221,6 +221,9 @@ def main():
     torch.manual_seed(seed)
 
     print(torch.cuda.device_count())
+
+    ###Hyperparameter printing 
+    print("Hyperparameters. lr: {}, batchsize: {}, alpha: {}, lambda_u: {}, T: {}".format(opts.lr, opts.batchsize, opts.alpha, opts.lambda_u, opts.T))
 
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
     use_gpu = torch.cuda.is_available()
@@ -443,6 +446,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
 
+    nsml.report(summary=True, train_acc_top1= avg_top1, val_acc_top5=avg_top5, step=epoch)
     return  avg_loss, avg_top1, avg_top5
 
 
