@@ -184,7 +184,8 @@ parser.add_argument('--epochs', type=int, default=250, metavar='N', help='number
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=50, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=30, type=int, help='batchsize_labeled')
+parser.add_argument('--batchsize2', default=75, type=int, help='batchsize_unlabeled')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
@@ -222,8 +223,6 @@ def main():
 
     print(torch.cuda.device_count())
 
-    ###Hyperparameter printing
-    print("Hyperparameters. lr: {}, batchsize: {}, alpha: {}, lambda_u: {}, T: {}".format(opts.lr, opts.batchsize, opts.alpha, opts.lambda_u, opts.T))
 
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
     use_gpu = torch.cuda.is_available()
@@ -280,7 +279,7 @@ def main():
                                   transforms.RandomVerticalFlip(),
                                   transforms.ToTensor(),
                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
-                                batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
+                                batch_size=opts.batchsize2, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
         print('unlabel_loader done')
 
         validation_loader = torch.utils.data.DataLoader(
@@ -290,7 +289,7 @@ def main():
                                    transforms.CenterCrop(opts.imsize),
                                    transforms.ToTensor(),
                                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
-                               batch_size=opts.batchsize, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
+                               batch_size=opts.batchsize2, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
         print('validation_loader done')
 
         # Set optimizer
@@ -301,6 +300,27 @@ def main():
 
         # INSTANTIATE STEP LEARNING SCHEDULER CLASS
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
+
+        '''
+        !!!!!!!!!!!!!
+        실험에 대한 정보 최대한 자세히 적기!!!
+        코드 다 저장해놓을순 없으니까 나중에 NSML 터미널만 보고도 무슨 실험인지 알 수 있게!
+        귀찮더라도..
+        !!!!!!!!!!!
+        '''
+
+        print("Title: {}".format("MixMatch"))
+        print("Purpose: {}".format("Mixmatch baseline testing"))
+        print("Environments")
+        print("Model: {}".format("Resnet 50"))
+        print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
+        print("Optimizer: {}, Scheduler: {}".format("adam", "MultiStepLR"))
+        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75."))
+        print("Details: {}".format("Experiment for constructing necessary baseline for CV project."))
+        print("Etc: {}".format("Changes from original code: Res18_basic -> Res50, batchsize smaller, Different batchsize btw labeled and unlabeled (30, 75)."))
+
+
+
 
         # Train and Validation
         best_acc = -1
@@ -361,6 +381,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             inputs_u1, inputs_u2 = data
 
         batch_size = inputs_x.size(0)
+        batch_size_u = inputs_u1.size(0)
         # Transform label to one-hot
         classno = NUM_CLASSES
         targets_org = targets_x
