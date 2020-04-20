@@ -293,7 +293,8 @@ def main():
         print('validation_loader done')
 
         # Set optimizer
-        optimizer = optim.Adam(model.parameters(), lr=opts.lr)
+        #optimizer = optim.Adam(model.parameters(), lr=opts.lr)
+        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004)
 
         # INSTANTIATE LOSS CLASS
         train_criterion = SemiLoss()
@@ -314,7 +315,7 @@ def main():
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("adam", "MultiStepLR"))
+        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "MultiStepLR"))
         print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75."))
         print("Details: {}".format("Experiment for constructing necessary baseline for CV project."))
         print("Etc: {}".format("Changes from original code: Res18_basic -> Res50, batchsize smaller, Different batchsize btw labeled and unlabeled (30, 75)."))
