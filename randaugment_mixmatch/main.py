@@ -21,6 +21,7 @@ import torch.nn.functional as F
 
 import torchvision
 from torchvision import datasets, models, transforms
+from RA import RandAugment
 
 import tensorflow as tf
 import torch.nn.functional as F
@@ -261,6 +262,7 @@ def main():
         train_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'train', train_ids,
                               transform=transforms.Compose([
+                                  RandAugment(2,5),
                                   transforms.Resize(opts.imResize),
                                   transforms.RandomResizedCrop(opts.imsize),
                                   transforms.RandomHorizontalFlip(),
@@ -273,6 +275,7 @@ def main():
         unlabel_loader = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'unlabel', unl_ids,
                               transform=transforms.Compose([
+                                  RandAugment(2,5),
                                   transforms.Resize(opts.imResize),
                                   transforms.RandomResizedCrop(opts.imsize),
                                   transforms.RandomHorizontalFlip(),
@@ -294,7 +297,7 @@ def main():
 
         # Set optimizer
         #optimizer = optim.Adam(model.parameters(), lr=opts.lr)
-        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004)
+        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004, nesterov=True)
 
         # INSTANTIATE LOSS CLASS
         train_criterion = SemiLoss()
@@ -310,15 +313,15 @@ def main():
         !!!!!!!!!!!
         '''
 
-        print("Title: {}".format("MixMatch"))
-        print("Purpose: {}".format("Mixmatch baseline testing(Chocolatefudge)"))
+        print("Title: {}".format("MixMatch+RandAugment"))
+        print("Purpose: {}".format("Randaugment 2,5 on labeled and unlabeled dataloader "))
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "MultiStepLR with 50,150 schedule"))
+        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "MultiStepLR"))
         print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75."))
-        print("Details: {}".format("Experiment for constructing necessary baseline for CV project."))
-        print("Etc: {}".format("Changes from original code: Res18_basic -> Res50, batchsize smaller, Different batchsize btw labeled and unlabeled (30, 75)."))
+        print("Details: {}".format("Optimizer has nesterov true. idk what it is.."))
+        print("Etc: {}".format(""))
 
 
 
