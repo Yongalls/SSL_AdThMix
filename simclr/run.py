@@ -37,8 +37,8 @@ NUM_CLASSES = 265
 
 
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
-parser.add_argument('--start_epoch', type=int, default=250, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=400, metavar='N', help='number of epochs to train (default: 200)')
+parser.add_argument('--start_epoch', type=int, default=0, metavar='N', help='number of start epoch (default: 1)')
+parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
@@ -245,24 +245,33 @@ def main():
     #         nsml.paused(scope=locals())
     # ################################
 
-    for param in model.parameters():
-        param.requires_grad = False
+    # for param in model.parameters():
+    #     param.requires_grad = False
 
     '''
     Change model structure, classification ~~
     '''
+    print("SimCLR Phase Ended")
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print('  + Number of params in SimCLR: {}'.format(params))
 
+
+    self.features.requires_grad = False
+    print("Turned of gradients for all layers except classifier")
 
 
     print("MixMatch Phase")
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     n_parameters = sum([p.data.nelement() for p in model.parameters()])
-    print('  + Number of params: {}'.format(n_parameters))
+    params2 = sum([np.prod(p.size()) for p in parameters])
+    print('  + Total Number of params in MixMatch: {}'.format(n_parameters))
+    print('  + Number of params to train in MixMatch: {}'.format(params2))
 
     if opts.mode == 'train':
         model.train()
         # Set dataloader
-        nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/162')
+        #nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/162')
         train_ids, val_ids, unl_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
         print('found {} train, {} validation and {} unlabeled images'.format(len(train_ids), len(val_ids), len(unl_ids)))
         train_loader_mm = torch.utils.data.DataLoader(

@@ -27,7 +27,8 @@ def _infer(model, root_path, test_loader=None):
     for idx, image in enumerate(test_loader):
         if torch.cuda.is_available():
             image = image.cuda()
-        _, probs = model(image)
+        # _, probs = model(image)
+        probs, _ = model(image)
         output = torch.argmax(probs, dim=1)
         output = output.detach().cpu().numpy()
         outputs.append(output)
@@ -106,10 +107,12 @@ class SimCLR(object):
     def _step(self, model, xis, xjs, n_iter):
 
         # get the representations and the projections
-        ris, zis = model(xis)  # [N,C]
+        # ris, zis = model(xis)  # [N,C]
+        zis, ris = model(xis)
 
         # get the representations and the projections
-        rjs, zjs = model(xjs)  # [N,C]
+        # rjs, zjs = model(xjs)  # [N,C]
+        zjs, rjs = model(xjs)
 
         # normalize projection feature vectors
         zis = F.normalize(zis, dim=1)

@@ -147,7 +147,7 @@ class DataSetWrapper(object):
                                               transforms.RandomHorizontalFlip(),
                                               transforms.RandomApply([color_jitter], p=0.8),
                                               transforms.RandomGrayscale(p=0.2),
-                                              GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])),
+                                              GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])-1),
                                               transforms.ToTensor()])
         return data_transforms
 
