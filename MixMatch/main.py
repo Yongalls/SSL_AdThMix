@@ -178,8 +178,8 @@ def bind_nsml(model):
 # Options
 ######################################################################
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
-parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=250, metavar='N', help='number of epochs to train (default: 200)')
+parser.add_argument('--start_epoch', type=int, default=250, metavar='N', help='number of start epoch (default: 1)')
+parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
@@ -253,6 +253,7 @@ def main():
             nsml.paused(scope=locals())
     ################################
 
+    #nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/4')
     if opts.mode == 'train':
         model.train()
         # Set dataloader
@@ -300,7 +301,7 @@ def main():
         train_criterion = SemiLoss()
 
         # INSTANTIATE STEP LEARNING SCHEDULER CLASS
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
+        #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
 
         '''
         !!!!!!!!!!!!!
@@ -311,7 +312,7 @@ def main():
         '''
 
         print("Title: {}".format("MixMatch"))
-        print("Purpose: {}".format("Mixmatch baseline testing(Chocolatefudge)"))
+        print("Purpose: {}".format("Mixmatch baseline testing(Chocolatefudge) // Check transfer learning 250 -> 300 epoch"))
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
@@ -328,7 +329,7 @@ def main():
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
             loss, _, _ = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu)
-            scheduler.step()
+            #scheduler.step()
 
             print('start validation')
             acc_top1, acc_top5 = validation(opts, validation_loader, model, epoch, use_gpu)

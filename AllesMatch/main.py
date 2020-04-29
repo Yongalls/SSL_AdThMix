@@ -10,6 +10,7 @@ import numpy as np
 import shutil
 import random
 import time
+import math
 
 import torch
 import torch.nn as nn
@@ -22,6 +23,7 @@ import torch.nn.functional as F
 import torchvision
 from torchvision import datasets, models, transforms
 from RA import RandAugment
+
 
 import tensorflow as tf
 import torch.nn.functional as F
@@ -86,7 +88,7 @@ class SemiLoss(object):
         probs_u = torch.softmax(outputs_u, dim=1)
         Lx = -torch.mean(torch.sum(F.log_softmax(outputs_x, dim=1) * targets_x, dim=1))
         Lu = torch.mean((probs_u - targets_u)**2)
-        return Lx, Lu, opts.lambda_u * linear_rampup(epoch, final_epoch)
+        return Lx, Lu, opts.lambda_u #* linear_rampup(epoch, final_epoch)
 
 def interleave_offsets(batch, nu):
     groups = [batch // (nu + 1)] * (nu + 1)
@@ -157,6 +159,21 @@ def _infer(model, root_path, test_loader=None):
     outputs = np.concatenate(outputs)
     return outputs
 
+
+def get_cosine_schedule_with_warmup(optimizer,
+                                    num_warmup_steps,
+                                    num_training_steps,
+                                    num_cycles=7./16.,
+                                    last_epoch=-1):
+    def _lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        no_progress = float(current_step - num_warmup_steps) / \
+            float(max(1, num_training_steps - num_warmup_steps))
+        return max(0., math.cos(math.pi * num_cycles * no_progress))
+
+    return lr_scheduler.LambdaLR(optimizer, _lr_lambda, last_epoch)
+
 def bind_nsml(model):
     def save(dir_name, *args, **kwargs):
         os.makedirs(dir_name, exist_ok=True)
@@ -186,7 +203,7 @@ parser.add_argument('--epochs', type=int, default=250, metavar='N', help='number
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--batchsize', default=30, type=int, help='batchsize_labeled')
-parser.add_argument('--batchsize2', default=75, type=int, help='batchsize_unlabeled')
+parser.add_argument('--batchsize2', default=210, type=int, help='batchsize_unlabeled')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
@@ -202,7 +219,7 @@ parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch int
 
 # hyper-parameters for mix-match
 parser.add_argument('--alpha', default=0.75, type=float)
-parser.add_argument('--lambda-u', default=150, type=float)
+parser.add_argument('--lambda-u', default=10, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 
 ### DO NOT MODIFY THIS BLOCK ###
@@ -307,14 +324,18 @@ def main():
 
         # Set optimizer
         #optimizer = optim.Adam(model.parameters(), lr=opts.lr)
-        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004, nesterov = True)
+        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0001, nesterov = True)
 
         # INSTANTIATE LOSS CLASS
         train_criterion = SemiLoss()
 
         # INSTANTIATE STEP LEARNING SCHEDULER CLASS
+        opts.k_img = 16078
+        opts.iteration = opts.k_img // opts.batchsize
+        opts.total_steps = opts.epochs * opts.iteration
+        #scheduler = get_cosine_schedule_with_warmup(optimizer, 0, opts.total_steps)
         #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
-        #scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup * args.iteration, args.total_steps)
+
         '''
         !!!!!!!!!!!!!
         실험에 대한 정보 최대한 자세히 적기!!!
@@ -323,15 +344,15 @@ def main():
         !!!!!!!!!!!
         '''
 
-        print("Title: {}".format("MixMatch+RandAugment"))
-        print("Purpose: {}".format("Randaugment 2,9 on labeled and unlabeled dataloader "))
+        print("Title: {}".format("Alle Match"))
+        print("Purpose: {}".format("MixMatch with threshold policy adaped from fixmatch + RandAugment  (Chocolatefudge)"))
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "No learning rate scheduling"))
-        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75."))
-        print("Details: {}".format("For labeled, Unlabeled data: RA(2,9) /// For making pseudo label, identical condition with validation set(no augmentation)"))
-        print("Etc: {}".format(""))
+        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0001", "without any scheduling"))
+        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 210., lambda-u not changed in overall training step"))
+        print("Details: {}".format("Experiment for thresholding some unlabeled examples in pseudo labeling. current threshold 0.7////"))
+        print("Etc: {}".format("No interleaving. IDK // ***T=0.5 is applied for unlabeled data // Strict threshold for 0.7. \nFor labeled, Unlabeled data: RA(2,9) /// For making pseudo label, identical condition with validation set(no augmentation) "))
 
 
 
@@ -365,6 +386,7 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
     losses = AverageMeter()
     losses_x = AverageMeter()
     losses_un = AverageMeter()
+    good_ulb = AverageMeter()
     weight_scale = AverageMeter()
     acc_top1 = AverageMeter()
     acc_top5 = AverageMeter()
@@ -403,6 +425,7 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
             inputs_u1p, inputs_u2p = data
 
         batch_size = inputs_x.size(0)
+        batch_size_u = inputs_u1.size(0)
         # Transform label to one-hot
         classno = NUM_CLASSES
         targets_org = targets_x
@@ -416,56 +439,104 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
         inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
         inputs_u1p, inputs_u2p = Variable(inputs_u1p), Variable(inputs_u2p)
 
+        threshold = 0.7
+        rm_idx = []
+
         with torch.no_grad():
             # compute guessed labels of unlabel samples
             embed_u1, pred_u1 = model(inputs_u1p)
             embed_u2, pred_u2 = model(inputs_u2p)
+            #print(pred_u1.size())
             pred_u_all = (torch.softmax(pred_u1, dim=1) + torch.softmax(pred_u2, dim=1)) / 2
+            crit = torch.max(pred_u_all, axis=1) #batch size
+            for i in range(int(crit[0].shape[0])):
+                if crit[0][i]<threshold:
+                    rm_idx.append(i)
+
+            #print(pred_u2.size())
             pt = pred_u_all**(1/opts.T)
+            #pt = pred_u_all
             targets_u = pt / pt.sum(dim=1, keepdim=True)
             targets_u = targets_u.detach()
 
+        #print(inputs_u1.size())
+        ##print(rm_idx)
+        inputs_u1 = np.delete(inputs_u1.cpu(), rm_idx, axis=0)
+        inputs_u2 = np.delete(inputs_u2.cpu(), rm_idx, axis=0)
+        targets_u = np.delete(targets_u.cpu(), rm_idx, axis=0)
+        good_ulb.update(batch_size_u - len(rm_idx))
+        #print(inputs_u1.size())
+        #print(targets_u.size())
+
+        inputs_u1, inputs_u2, targets_u = inputs_u1.cuda(), inputs_u2.cuda(), targets_u.cuda()
         # mixup
+
         all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2], dim=0)
         all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)
+        #print(all_inputs.size())
+        #print(all_targets.size())
+
 
         lamda = np.random.beta(opts.alpha, opts.alpha)
         lamda= max(lamda, 1-lamda)
         newidx = torch.randperm(all_inputs.size(0))
         input_a, input_b = all_inputs, all_inputs[newidx]
         target_a, target_b = all_targets, all_targets[newidx]
+        # input_a, input_b = all_inputs, all_inputs
+        # target_a, target_b = all_targets, all_targets
 
         mixed_input = lamda * input_a + (1 - lamda) * input_b
         mixed_target = lamda * target_a + (1 - lamda) * target_b
+        #print(mixed_input.size())
+        #print(mixed_target.size())
 
         # interleave labeled and unlabed samples between batches to get correct batchnorm calculation
         mixed_input = list(torch.split(mixed_input, batch_size))
-        mixed_input = interleave(mixed_input, batch_size)
+        #mixed_input = interleave(mixed_input, batch_size)
+        #print(len(mixed_input))
 
         optimizer.zero_grad()
 
         fea, logits_temp = model(mixed_input[0])
-        logits = [logits_temp]
-        for newinput in mixed_input[1:]:
-            fea, logits_temp = model(newinput)
-            logits.append(logits_temp)
 
-        # put interleaved samples back
-        logits = interleave(logits, batch_size)
-        logits_x = logits[0]
-        logits_u = torch.cat(logits[1:], dim=0)
+        if len(rm_idx)!=batch_size_u:
+            #print("asdlfkjasodifjasio")
+            logits = [logits_temp]
+            for newinput in mixed_input[1:]:
+                fea, logits_temp = model(newinput)
+                logits.append(logits_temp)
 
-        loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
-        loss = loss_x + weigts_mixing * loss_un
+            # put interleaved samples back
+            #logits = interleave(logits, batch_size)
+            logits_x = logits[0]
+            logits_u = torch.cat(logits[1:], dim=0)
+            #print(logits_x.size())
+            #print(logits_u.size())
 
-        losses.update(loss.item(), inputs_x.size(0))
-        losses_x.update(loss_x.item(), inputs_x.size(0))
-        losses_un.update(loss_un.item(), inputs_x.size(0))
-        weight_scale.update(weigts_mixing, inputs_x.size(0))
+            loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
+            loss = loss_x + weigts_mixing * loss_un
+            losses.update(loss.item(), inputs_x.size(0))
+            losses_x.update(loss_x.item(), inputs_x.size(0))
+            losses_un.update(loss_un.item(), inputs_x.size(0))
+            weight_scale.update(weigts_mixing, inputs_x.size(0))
+
+        else:
+            logits = [logits_temp]
+            #logits = interleave(logits, batch_size)
+            logits_x = logits[0]
+            loss_x = -torch.mean(torch.sum(F.log_softmax(logits_x, dim=1) * targets_x, dim=1))
+            loss = loss_x
+            losses.update(loss.item(), inputs_x.size(0))
+            losses_x.update(loss_x.item(), inputs_x.size(0))
+            losses_un.update(0, inputs_x.size(0))
+            weight_scale.update(75, inputs_x.size(0))
+
+
 
         # compute gradient and do SGD step
         loss.backward()
         optimizer.step()
+        #scheduler.step()
 
         with torch.no_grad():
             # compute guessed labels of unlabel samples
@@ -490,7 +561,7 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
 
-    nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch)
+    nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch, good_unlabeled = good_ulb.avg)
     return  avg_loss, avg_top1, avg_top5
 
 

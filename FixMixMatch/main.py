@@ -178,8 +178,8 @@ def bind_nsml(model):
 # Options
 ######################################################################
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
-parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=250, metavar='N', help='number of epochs to train (default: 200)')
+parser.add_argument('--start_epoch', type=int, default=250, metavar='N', help='number of start epoch (default: 1)')
+parser.add_argument('--epochs', type=int, default=400, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
@@ -190,7 +190,7 @@ parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
 parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
-parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-5)')
+parser.add_argument('--lr', type=float, default=5e-6, metavar='LR', help='learning rate (default: 5e-5)')
 parser.add_argument('--imResize', default=256, type=int, help='')
 parser.add_argument('--imsize', default=224, type=int, help='')
 parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
@@ -201,7 +201,7 @@ parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch int
 
 # hyper-parameters for mix-match
 parser.add_argument('--alpha', default=0.75, type=float)
-parser.add_argument('--lambda-u', default=75, type=float)
+parser.add_argument('--lambda-u', default=150, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 
 ### DO NOT MODIFY THIS BLOCK ###
@@ -256,6 +256,7 @@ def main():
     if opts.mode == 'train':
         model.train()
         # Set dataloader
+        nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/162')
         train_ids, val_ids, unl_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
         print('found {} train, {} validation and {} unlabeled images'.format(len(train_ids), len(val_ids), len(unl_ids)))
         train_loader = torch.utils.data.DataLoader(
@@ -315,10 +316,10 @@ def main():
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "MultiStepLR with 50,150 schedule"))
+        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "No Schedule"))
         print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75., lambda-u not changed in overall training step"))
-        print("Details: {}".format("Experiment for thresholding some unlabeled examples in pseudo labeling. current threshold 0.9"))
-        print("Etc: {}".format("No interleaving. IDK // threshold scheduling with epoch (0.9 - 0.8 - .. - 0.1) for every 10 epochs.  Without learning rate cheduling"))
+        print("Details: {}".format("Experiment for thresholding some unlabeled examples in pseudo labeling. current threshold 0.9, Continue Learning for 250~400 epoches"))
+        print("Etc: {}".format("No interleaving. IDK // ***T=0.5 is applied for unlabeled data // threshold scheduling with epoch (0.9 0.875 0.85 0.825 0.8 ... 0.4) for every 5 epochs.  Without learning rate scheduling"))
 
 
 
@@ -395,7 +396,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         inputs_x, targets_x = Variable(inputs_x), Variable(targets_x)
         inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
 
-        threshold = max(0.9 - (epoch//10)/10, 0.1)
+        threshold = max(0.9 - (epoch//5)/40, 0.5)
         rm_idx = []
 
         with torch.no_grad():
@@ -410,8 +411,8 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
                     rm_idx.append(i)
 
             #print(pred_u2.size())
-            #pt = pred_u_all**(1/opts.T)
-            pt = pred_u_all
+            pt = pred_u_all**(1/opts.T)
+            #pt = pred_u_all
             targets_u = pt / pt.sum(dim=1, keepdim=True)
             targets_u = targets_u.detach()
 

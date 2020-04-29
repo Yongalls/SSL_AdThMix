@@ -3,14 +3,20 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-import os
-import argparse
-
-import numpy as np
 import shutil
-import random
 import time
 
+import torchvision
+from torchvision import datasets, transforms
+
+import tensorflow as tf
+import torch.nn.functional as F
+
+from simclr import SimCLR
+import os
+import random
+import yaml
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,27 +24,51 @@ from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
 
-import torchvision
-from torchvision import datasets, models, transforms
-from RA import RandAugment
-
-import tensorflow as tf
-import torch.nn.functional as F
-
-from ImageDataLoader import SimpleImageLoader
-from models import Res18, Res50, Dense121, Res18_basic
-#
-# from pytorch_metric_learning import miners
-# from pytorch_metric_learning import losses as lossfunc
-import glob
-
+from models.resnet_simclr import ResNetSimCLR
+from data_aug.dataset_wrapper import DataSetWrapper
+import argparse
 import nsml
 from nsml import DATASET_PATH, IS_ON_NSML
+from ImageDataLoader_mixmatch import SimpleImageLoader
 
 NUM_CLASSES = 265
-if not IS_ON_NSML:
-    DATASET_PATH = 'fashion_demo'
+
+
+parser = argparse.ArgumentParser(description='Sample Product200K Training')
+parser.add_argument('--start_epoch', type=int, default=250, metavar='N', help='number of start epoch (default: 1)')
+parser.add_argument('--epochs', type=int, default=400, metavar='N', help='number of epochs to train (default: 200)')
+
+# basic settings
+parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
+parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+parser.add_argument('--batchsize', default=30, type=int, help='batchsize_labeled')
+parser.add_argument('--batchsize2', default=75, type=int, help='batchsize_unlabeled')
+parser.add_argument('--seed', type=int, default=123, help='random seed')
+
+# basic hyper-parameters
+parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
+parser.add_argument('--lr', type=float, default=5e-6, metavar='LR', help='learning rate (default: 5e-5)')
+parser.add_argument('--imResize', default=256, type=int, help='')
+parser.add_argument('--imsize', default=224, type=int, help='')
+parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
+
+# arguments for logging and backup
+parser.add_argument('--log_interval', type=int, default=10, metavar='N', help='logging training status')
+parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch interval')
+
+# hyper-parameters for mix-match
+parser.add_argument('--alpha', default=0.75, type=float)
+parser.add_argument('--lambda-u', default=150, type=float)
+parser.add_argument('--T', default=0.5, type=float)
+
+### DO NOT MODIFY THIS BLOCK ###
+# arguments for nsml
+parser.add_argument('--pause', type=int, default=0)
+parser.add_argument('--mode', type=str, default='train')
+################################
+
 
 def top_n_accuracy_score(y_true, y_prob, n=5, normalize=True):
     num_obs, num_labels = y_prob.shape
@@ -86,7 +116,7 @@ class SemiLoss(object):
         probs_u = torch.softmax(outputs_u, dim=1)
         Lx = -torch.mean(torch.sum(F.log_softmax(outputs_x, dim=1) * targets_x, dim=1))
         Lu = torch.mean((probs_u - targets_u)**2)
-        return Lx, Lu, opts.lambda_u * linear_rampup(epoch, final_epoch)
+        return Lx, Lu, opts.lambda_u #* linear_rampup(epoch, final_epoch)
 
 def interleave_offsets(batch, nu):
     groups = [batch // (nu + 1)] * (nu + 1)
@@ -107,31 +137,6 @@ def interleave(xy, batch):
     return [torch.cat(v, dim=0) for v in xy]
 
 
-def split_ids(path, ratio):
-    with open(path) as f:
-        ids_l = []
-        ids_u = []
-        for i, line in enumerate(f.readlines()):
-            if i == 0 or line == '' or line == '\n':
-                continue
-            line = line.replace('\n', '').split('\t')
-            if int(line[1]) >= 0:
-                ids_l.append(int(line[0]))
-            else:
-                ids_u.append(int(line[0]))
-
-    ids_l = np.array(ids_l)
-    ids_u = np.array(ids_u)
-
-    perm = np.random.permutation(np.arange(len(ids_l)))
-    cut = int(ratio*len(ids_l))
-    train_ids = ids_l[perm][cut:]
-    val_ids = ids_l[perm][:cut]
-
-    return train_ids, val_ids, ids_u
-
-
-### NSML functions
 def _infer(model, root_path, test_loader=None):
     if test_loader is None:
         test_loader = torch.utils.data.DataLoader(
@@ -174,50 +179,35 @@ def bind_nsml(model):
 
     nsml.bind(save=save, load=load, infer=infer)
 
+def split_ids(path, ratio):
+    with open(path) as f:
+        ids_l = []
+        ids_u = []
+        for i, line in enumerate(f.readlines()):
+            if i == 0 or line == '' or line == '\n':
+                continue
+            line = line.replace('\n', '').split('\t')
+            if int(line[1]) >= 0:
+                ids_l.append(int(line[0]))
+            else:
+                ids_u.append(int(line[0]))
 
-######################################################################
-# Options
-######################################################################
-parser = argparse.ArgumentParser(description='Sample Product200K Training')
-parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=250, metavar='N', help='number of epochs to train (default: 200)')
+    ids_l = np.array(ids_l)
+    ids_u = np.array(ids_u)
 
-# basic settings
-parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
-parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=30, type=int, help='batchsize_labeled')
-parser.add_argument('--batchsize2', default=75, type=int, help='batchsize_unlabeled')
-parser.add_argument('--seed', type=int, default=123, help='random seed')
+    perm = np.random.permutation(np.arange(len(ids_l)))
+    cut = int(ratio*len(ids_l))
+    train_ids = ids_l[perm][cut:]
+    val_ids = ids_l[perm][:cut]
 
-# basic hyper-parameters
-parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
-parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-5)')
-parser.add_argument('--imResize', default=256, type=int, help='')
-parser.add_argument('--imsize', default=224, type=int, help='')
-parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
-
-# arguments for logging and backup
-parser.add_argument('--log_interval', type=int, default=10, metavar='N', help='logging training status')
-parser.add_argument('--save_epoch', type=int, default=50, help='saving epoch interval')
-
-# hyper-parameters for mix-match
-parser.add_argument('--alpha', default=0.75, type=float)
-parser.add_argument('--lambda-u', default=150, type=float)
-parser.add_argument('--T', default=0.5, type=float)
-
-### DO NOT MODIFY THIS BLOCK ###
-# arguments for nsml
-parser.add_argument('--pause', type=int, default=0)
-parser.add_argument('--mode', type=str, default='train')
-################################
+    return train_ids, val_ids, ids_u
 
 def main():
+    print("SimCLR Phase")
     global opts
     opts = parser.parse_args()
-    opts.cuda = 0
 
-    # Set GPU
-    seed = opts.seed
+    seed = 123
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -225,44 +215,59 @@ def main():
     print(torch.cuda.device_count())
 
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_ids
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     use_gpu = torch.cuda.is_available()
     if use_gpu:
-        opts.cuda = 1
-        print("Currently using GPU {}".format(opts.gpu_ids))
+        #opts.cuda = 1
+        print("Currently using GPU {}".format('0'))
         cudnn.benchmark = True
         torch.cuda.manual_seed_all(seed)
     else:
         print("Currently using CPU (GPU is highly recommended)")
 
+    config = yaml.load(open("config.yaml", "r"), Loader=yaml.FullLoader)
+    dataset = DataSetWrapper(config['batch_size'], **config['dataset'])
 
-    # Set model
-    model = Res50(NUM_CLASSES)
-    model.eval()
+    # model = ResNetSimCLR(config["model"], 256).to('cuda')
+    # #model = ResNetSimCLR("resnet50",256).to('cuda')
+    # model = self._load_pre_trained_weights(model)
 
+
+
+
+    simclr = SimCLR(dataset, config)
+    model = simclr.train()
+
+    # ### DO NOT MODIFY THIS BLOCK ###
+    # if IS_ON_NSML:
+    #     bind_nsml(model)
+    #     if opts.pause:
+    #         nsml.paused(scope=locals())
+    # ################################
+
+    for param in model.parameters():
+        param.requires_grad = False
+
+    '''
+    Change model structure, classification ~~
+    '''
+
+
+
+    print("MixMatch Phase")
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     n_parameters = sum([p.data.nelement() for p in model.parameters()])
     print('  + Number of params: {}'.format(n_parameters))
 
-    if use_gpu:
-        model.cuda()
-
-    ### DO NOT MODIFY THIS BLOCK ###
-    if IS_ON_NSML:
-        bind_nsml(model)
-        if opts.pause:
-            nsml.paused(scope=locals())
-    ################################
-
     if opts.mode == 'train':
         model.train()
         # Set dataloader
+        nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/162')
         train_ids, val_ids, unl_ids = split_ids(os.path.join(DATASET_PATH, 'train/train_label'), 0.2)
         print('found {} train, {} validation and {} unlabeled images'.format(len(train_ids), len(val_ids), len(unl_ids)))
-        train_loader = torch.utils.data.DataLoader(
+        train_loader_mm = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'train', train_ids,
                               transform=transforms.Compose([
-                                  RandAugment(2,9),
                                   transforms.Resize(opts.imResize),
                                   transforms.RandomResizedCrop(opts.imsize),
                                   transforms.RandomHorizontalFlip(),
@@ -272,10 +277,9 @@ def main():
                                 batch_size=opts.batchsize, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
         print('train_loader done')
 
-        unlabel_loader = torch.utils.data.DataLoader(
+        unlabel_loader_mm = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'unlabel', unl_ids,
                               transform=transforms.Compose([
-                                  RandAugment(2,9),
                                   transforms.Resize(opts.imResize),
                                   transforms.RandomResizedCrop(opts.imsize),
                                   transforms.RandomHorizontalFlip(),
@@ -285,17 +289,7 @@ def main():
                                 batch_size=opts.batchsize2, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
         print('unlabel_loader done')
 
-        unlabel_loader_pl = torch.utils.data.DataLoader(
-            SimpleImageLoader(DATASET_PATH, 'unlabel', unl_ids,
-                               transform=transforms.Compose([
-                                   transforms.Resize(opts.imResize),
-                                   transforms.CenterCrop(opts.imsize),
-                                   transforms.ToTensor(),
-                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),])),
-                               batch_size=opts.batchsize2, shuffle=True, num_workers=4, pin_memory=True, drop_last=True)
-        print('validation_loader done')
-
-        validation_loader = torch.utils.data.DataLoader(
+        validation_loader_mm = torch.utils.data.DataLoader(
             SimpleImageLoader(DATASET_PATH, 'val', val_ids,
                                transform=transforms.Compose([
                                    transforms.Resize(opts.imResize),
@@ -305,16 +299,14 @@ def main():
                                batch_size=opts.batchsize2, shuffle=False, num_workers=4, pin_memory=True, drop_last=False)
         print('validation_loader done')
 
-        # Set optimizer
-        #optimizer = optim.Adam(model.parameters(), lr=opts.lr)
-        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004, nesterov = True)
+        optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004)
 
         # INSTANTIATE LOSS CLASS
         train_criterion = SemiLoss()
 
         # INSTANTIATE STEP LEARNING SCHEDULER CLASS
         #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[50, 150], gamma=0.1)
-        #scheduler = get_cosine_schedule_with_warmup(optimizer, args.warmup * args.iteration, args.total_steps)
+
         '''
         !!!!!!!!!!!!!
         실험에 대한 정보 최대한 자세히 적기!!!
@@ -323,15 +315,15 @@ def main():
         !!!!!!!!!!!
         '''
 
-        print("Title: {}".format("MixMatch+RandAugment"))
-        print("Purpose: {}".format("Randaugment 2,9 on labeled and unlabeled dataloader "))
+        print("Title: {}".format("Fix - MixMatch"))
+        print("Purpose: {}".format("MixMatch with threshold policy adaped from fixmatch(Chocolatefudge)"))
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "No learning rate scheduling"))
-        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75."))
-        print("Details: {}".format("For labeled, Unlabeled data: RA(2,9) /// For making pseudo label, identical condition with validation set(no augmentation)"))
-        print("Etc: {}".format(""))
+        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "No Schedule"))
+        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75., lambda-u not changed in overall training step"))
+        print("Details: {}".format("Experiment for thresholding some unlabeled examples in pseudo labeling. current threshold 0.9, Continue Learning for 250~400 epoches"))
+        print("Etc: {}".format("No interleaving. IDK // ***T=0.5 is applied for unlabeled data // threshold scheduling with epoch (0.9 0.875 0.85 0.825 0.8 ... 0.4) for every 5 epochs.  Without learning rate scheduling"))
 
 
 
@@ -340,11 +332,11 @@ def main():
         best_acc = -1
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
-            loss, _, _ = train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, train_criterion, optimizer, epoch, use_gpu)
+            loss, _, _ = train(opts, train_loader_mm, unlabel_loader_mm, model, train_criterion, optimizer, epoch, use_gpu)
             #scheduler.step()
 
             print('start validation')
-            acc_top1, acc_top5 = validation(opts, validation_loader, model, epoch, use_gpu)
+            acc_top1, acc_top5 = validation(opts, validation_loader_mm, model, epoch, use_gpu)
             is_best = acc_top1 > best_acc
             best_acc = max(acc_top1, best_acc)
             nsml.report(summary=True, train_loss= loss, val_acc_top1= acc_top1, val_acc_top5=acc_top5, step=epoch)
@@ -361,10 +353,12 @@ def main():
                     torch.save(model.state_dict(), os.path.join('runs', opts.name + '_e{}'.format(epoch)))
 
 
-def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterion, optimizer, epoch, use_gpu):
+
+def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, use_gpu):
     losses = AverageMeter()
     losses_x = AverageMeter()
     losses_un = AverageMeter()
+    good_ulb = AverageMeter()
     weight_scale = AverageMeter()
     acc_top1 = AverageMeter()
     acc_top5 = AverageMeter()
@@ -377,7 +371,6 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
     nCnt =0
     labeled_train_iter = iter(train_loader)
     unlabeled_train_iter = iter(unlabel_loader)
-    unlabeled_pl_iter = iter(unlabel_loader_pl)
 
     for batch_idx in range(len(train_loader)):
         try:
@@ -394,15 +387,9 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
             unlabeled_train_iter = iter(unlabel_loader)
             data = unlabeled_train_iter.next()
             inputs_u1, inputs_u2 = data
-        try:
-            data = unlabeled_pl_iter.next()
-            inputs_u1p, inputs_u2p = data
-        except:
-            unlabeled_pl_iter = iter(unlabel_loader_pl)
-            data = unlabeled_pl_iter.next()
-            inputs_u1p, inputs_u2p = data
 
         batch_size = inputs_x.size(0)
+        batch_size_u = inputs_u1.size(0)
         # Transform label to one-hot
         classno = NUM_CLASSES
         targets_org = targets_x
@@ -411,23 +398,46 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
         if use_gpu :
             inputs_x, targets_x = inputs_x.cuda(), targets_x.cuda()
             inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()
-            inputs_u1p, inputs_u2p = inputs_u1p.cuda(), inputs_u2p.cuda()
         inputs_x, targets_x = Variable(inputs_x), Variable(targets_x)
         inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
-        inputs_u1p, inputs_u2p = Variable(inputs_u1p), Variable(inputs_u2p)
+
+        threshold = max(0.9 - (epoch//5)/40, 0.5)
+        rm_idx = []
 
         with torch.no_grad():
             # compute guessed labels of unlabel samples
-            embed_u1, pred_u1 = model(inputs_u1p)
-            embed_u2, pred_u2 = model(inputs_u2p)
+            embed_u1, pred_u1 = model(inputs_u1)
+            embed_u2, pred_u2 = model(inputs_u2)
+            #print(pred_u1.size())
             pred_u_all = (torch.softmax(pred_u1, dim=1) + torch.softmax(pred_u2, dim=1)) / 2
+            crit = torch.max(pred_u_all, axis=1) #batch size
+            for i in range(int(crit[0].shape[0])):
+                if crit[0][i]<threshold:
+                    rm_idx.append(i)
+
+            #print(pred_u2.size())
             pt = pred_u_all**(1/opts.T)
+            #pt = pred_u_all
             targets_u = pt / pt.sum(dim=1, keepdim=True)
             targets_u = targets_u.detach()
 
+        #print(inputs_u1.size())
+        ##print(rm_idx)
+        inputs_u1 = np.delete(inputs_u1.cpu(), rm_idx, axis=0)
+        inputs_u2 = np.delete(inputs_u2.cpu(), rm_idx, axis=0)
+        targets_u = np.delete(targets_u.cpu(), rm_idx, axis=0)
+        good_ulb.update(batch_size_u - len(rm_idx))
+        #print(inputs_u1.size())
+        #print(targets_u.size())
+
+        inputs_u1, inputs_u2, targets_u = inputs_u1.cuda(), inputs_u2.cuda(), targets_u.cuda()
         # mixup
+
         all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2], dim=0)
         all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)
+        #print(all_inputs.size())
+        #print(all_targets.size())
+
 
         lamda = np.random.beta(opts.alpha, opts.alpha)
         lamda= max(lamda, 1-lamda)
@@ -437,31 +447,51 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
 
         mixed_input = lamda * input_a + (1 - lamda) * input_b
         mixed_target = lamda * target_a + (1 - lamda) * target_b
+        #print(mixed_input.size())
+        #print(mixed_target.size())
 
         # interleave labeled and unlabed samples between batches to get correct batchnorm calculation
         mixed_input = list(torch.split(mixed_input, batch_size))
-        mixed_input = interleave(mixed_input, batch_size)
+        #mixed_input = interleave(mixed_input, batch_size)
+        #print(len(mixed_input))
 
         optimizer.zero_grad()
 
         fea, logits_temp = model(mixed_input[0])
-        logits = [logits_temp]
-        for newinput in mixed_input[1:]:
-            fea, logits_temp = model(newinput)
-            logits.append(logits_temp)
 
-        # put interleaved samples back
-        logits = interleave(logits, batch_size)
-        logits_x = logits[0]
-        logits_u = torch.cat(logits[1:], dim=0)
+        if len(rm_idx)!=batch_size_u:
+            #print("asdlfkjasodifjasio")
+            logits = [logits_temp]
+            for newinput in mixed_input[1:]:
+                fea, logits_temp = model(newinput)
+                logits.append(logits_temp)
 
-        loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
-        loss = loss_x + weigts_mixing * loss_un
+            # put interleaved samples back
+            #logits = interleave(logits, batch_size)
+            logits_x = logits[0]
+            logits_u = torch.cat(logits[1:], dim=0)
+            #print(logits_x.size())
+            #print(logits_u.size())
 
-        losses.update(loss.item(), inputs_x.size(0))
-        losses_x.update(loss_x.item(), inputs_x.size(0))
-        losses_un.update(loss_un.item(), inputs_x.size(0))
-        weight_scale.update(weigts_mixing, inputs_x.size(0))
+            loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
+            loss = loss_x + weigts_mixing * loss_un
+            losses.update(loss.item(), inputs_x.size(0))
+            losses_x.update(loss_x.item(), inputs_x.size(0))
+            losses_un.update(loss_un.item(), inputs_x.size(0))
+            weight_scale.update(weigts_mixing, inputs_x.size(0))
+
+        else:
+            logits = [logits_temp]
+            #logits = interleave(logits, batch_size)
+            logits_x = logits[0]
+            loss_x = -torch.mean(torch.sum(F.log_softmax(logits_x, dim=1) * targets_x, dim=1))
+            loss = loss_x
+            losses.update(loss.item(), inputs_x.size(0))
+            losses_x.update(loss_x.item(), inputs_x.size(0))
+            losses_un.update(0, inputs_x.size(0))
+            weight_scale.update(75, inputs_x.size(0))
+
+
 
         # compute gradient and do SGD step
         loss.backward()
@@ -490,7 +520,7 @@ def train(opts, train_loader, unlabel_loader, unlabel_loader_pl, model, criterio
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
 
-    nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch)
+    nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch, good_unlabeled = good_ulb.avg)
     return  avg_loss, avg_top1, avg_top5
 
 
@@ -518,7 +548,5 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
         print('Test Epoch:{} Top1_acc_val:{:.2f}% Top5_acc_val:{:.2f}% '.format(epoch, avg_top1, avg_top5))
     return avg_top1, avg_top5
 
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
