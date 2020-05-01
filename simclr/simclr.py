@@ -91,13 +91,14 @@ def _save_config_file(model_checkpoints_folder):
 
 class SimCLR(object):
 
-    def __init__(self, dataset, config):
+    def __init__(self, dataset, config, mode):
         #self.model = model
         self.config = config
         self.device = self._get_device()
         #self.writer = SummaryWriter()
         self.dataset = dataset
         self.nt_xent_criterion = NTXentLoss(self.device, config['batch_size'], **config['loss'])
+        self.mode = mode
 
     def _get_device(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -123,89 +124,96 @@ class SimCLR(object):
 
     def train(self):
 
-        train_loader, valid_loader = self.dataset.get_data_loaders()
+
         model = ResNetSimCLR(**self.config["model"]).to(self.device)
         model = self._load_pre_trained_weights(model)
-
-
-        if IS_ON_NSML:
-            bind_nsml(model)
+        model.eval()
 
         use_gpu = torch.cuda.is_available()
         if use_gpu:
             model.cuda()
 
-        optimizer = torch.optim.Adam(model.parameters(), 3e-4, weight_decay=eval(self.config['weight_decay']))
-
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=0,
-                                                               last_epoch=-1)
-
-        # if apex_support and self.config['fp16_precision']:
-        #     model, optimizer = amp.initialize(model, optimizer,
-        #                                       opt_level='O2',
-        #                                       keep_batchnorm_fp32=True)
-
-        #model_checkpoints_folder = os.path.join(self.writer.log_dir, 'checkpoints')
-
-        # save config file
-        #_save_config_file(model_checkpoints_folder)
-
-        n_iter = 0
-        valid_n_iter = 0
-        best_valid_loss = np.inf
-
-        for epoch_counter in range(self.config['epochs']):
-            losses = AverageMeter()
-            batch_cnt = 0
-            for (xis, xjs) in train_loader:
-                batch_cnt+=1
-                optimizer.zero_grad()
-
-                xis = xis.to(self.device)
-                xjs = xjs.to(self.device)
-
-                loss = self._step(model, xis, xjs, n_iter)
-
-                # if n_iter % self.config['log_every_n_steps'] == 0:
-                #     self.writer.add_scalar('train_loss', loss, global_step=n_iter)
-
-                # if apex_support and self.config['fp16_precision']:
-                #     with amp.scale_loss(loss, optimizer) as scaled_loss:
-                #         scaled_loss.backward()
-                loss.backward()
-                losses.update(loss.item(), xjs.size(0))
-                optimizer.step()
-                n_iter += 1
-                if batch_cnt%20==0:
-                    print("Epoch: {}, [{}/{}], loss: {}".format(epoch_counter, batch_cnt*64, len(train_loader.dataset), losses.avg))
-                # if batch_cnt>2:
-                #     break
+        if IS_ON_NSML:
+            bind_nsml(model)
+            if self.mode=='test':
+                nsml.paused(scope=locals())
 
 
 
-            # validate the model if requested
-            nsml.report(summary=True, loss=losses.avg, step=epoch_counter)
-            if epoch_counter % self.config['eval_every_n_epochs'] == 0:
-                valid_loss = self._validate(model, valid_loader)
-                if valid_loss < best_valid_loss:
-                    # save the model weights
-                    best_valid_loss = valid_loss
-                    #torch.save(model.state_dict(), os.path.join(model_checkpoints_folder, 'model.pth'))
-                    print('saving best checkpoint...')
+
+        if self.mode=='train':
+            model.train()
+            train_loader, valid_loader = self.dataset.get_data_loaders()
+            optimizer = torch.optim.Adam(model.parameters(), 3e-4, weight_decay=eval(self.config['weight_decay']))
+
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=0,
+                                                                   last_epoch=-1)
+            # if apex_support and self.config['fp16_precision']:
+            #     model, optimizer = amp.initialize(model, optimizer,
+            #                                       opt_level='O2',
+            #                                       keep_batchnorm_fp32=True)
+
+            #model_checkpoints_folder = os.path.join(self.writer.log_dir, 'checkpoints')
+
+            # save config file
+            #_save_config_file(model_checkpoints_folder)
+
+            n_iter = 0
+            valid_n_iter = 0
+            best_valid_loss = np.inf
+
+            for epoch_counter in range(self.config['epochs']):
+                losses = AverageMeter()
+                batch_cnt = 0
+                for (xis, xjs) in train_loader:
+                    batch_cnt+=1
+                    optimizer.zero_grad()
+
+                    xis = xis.to(self.device)
+                    xjs = xjs.to(self.device)
+
+                    loss = self._step(model, xis, xjs, n_iter)
+
+                    # if n_iter % self.config['log_every_n_steps'] == 0:
+                    #     self.writer.add_scalar('train_loss', loss, global_step=n_iter)
+
+                    # if apex_support and self.config['fp16_precision']:
+                    #     with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    #         scaled_loss.backward()
+                    loss.backward()
+                    losses.update(loss.item(), xjs.size(0))
+                    optimizer.step()
+                    n_iter += 1
+                    if batch_cnt%20==0:
+                        print("Epoch: {}, [{}/{}], loss: {}".format(epoch_counter, batch_cnt*64, len(train_loader.dataset), losses.avg))
+                    if batch_cnt>2:
+                        break
+
+
+
+                # validate the model if requested
+                if epoch_counter % self.config['eval_every_n_epochs'] == 0:
+                    valid_loss = self._validate(model, valid_loader)
+                    if valid_loss < best_valid_loss:
+                        # save the model weights
+                        best_valid_loss = valid_loss
+                        #torch.save(model.state_dict(), os.path.join(model_checkpoints_folder, 'model.pth'))
+                        print('saving best checkpoint...')
+                        if IS_ON_NSML:
+                            nsml.save("yongall" + '_best')
+                    #self.writer.add_scalar('validation_loss', valid_loss, global_step=valid_n_iter)
+                    valid_n_iter += 1
+                nsml.report(summary=True, valid_loss=valid_loss, loss=losses.avg, step=epoch_counter)
+                # warmup for the first 10 epochs
+                if epoch_counter >= 20:
+                    scheduler.step()
+
+
+                if (epoch_counter) % 25 == 0:
                     if IS_ON_NSML:
-                        nsml.save("yongall" + '_best')
-                #self.writer.add_scalar('validation_loss', valid_loss, global_step=valid_n_iter)
-                valid_n_iter += 1
-            nsml.report(summary=True, valid_loss=valid_loss, step=epoch_counter)
-            # warmup for the first 10 epochs
-            if epoch_counter >= 30:
-                scheduler.step()
-
-
-            if (epoch_counter) % 10 == 0:
-                if IS_ON_NSML:
-                    nsml.save("yongall" + '_e{}'.format(epoch_counter))
-            #self.writer.add_scalar('cosine_lr_decay', scheduler.get_lr()[0], global_step=n_iter)
+                        nsml.save("yongall" + '_e{}'.format(epoch_counter))
+                #self.writer.add_scalar('cosine_lr_decay', scheduler.get_lr()[0], global_step=n_iter)
+            return model
         return model
 
     def _load_pre_trained_weights(self, model):

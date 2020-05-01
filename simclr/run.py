@@ -12,7 +12,7 @@ from torchvision import datasets, transforms
 import tensorflow as tf
 import torch.nn.functional as F
 
-from simclr import SimCLR
+#from simclr import SimCLR
 import os
 import random
 import yaml
@@ -33,12 +33,21 @@ import nsml
 from nsml import DATASET_PATH, IS_ON_NSML
 from ImageDataLoader_mixmatch import SimpleImageLoader
 
+from models.resnet_simclr import ResNetSimCLR
+#from torch.utils.tensorboard import SummaryWriter
+from loss.nt_xent import NTXentLoss
+
+import sys
+
+
 NUM_CLASSES = 265
+
+
 
 
 parser = argparse.ArgumentParser(description='Sample Product200K Training')
 parser.add_argument('--start_epoch', type=int, default=0, metavar='N', help='number of start epoch (default: 1)')
-parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number of epochs to train (default: 200)')
+parser.add_argument('--epochs', type=int, default=150, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
@@ -49,7 +58,7 @@ parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
 parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
-parser.add_argument('--lr', type=float, default=5e-6, metavar='LR', help='learning rate (default: 5e-5)')
+parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-5)')
 parser.add_argument('--imResize', default=256, type=int, help='')
 parser.add_argument('--imsize', default=224, type=int, help='')
 parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
@@ -203,6 +212,7 @@ def split_ids(path, ratio):
     return train_ids, val_ids, ids_u
 
 def main():
+    print("SimCLR for 100 epochs")
     print("SimCLR Phase")
     global opts
     opts = parser.parse_args()
@@ -235,40 +245,62 @@ def main():
 
 
 
-    simclr = SimCLR(dataset, config)
-    model = simclr.train()
 
-    # ### DO NOT MODIFY THIS BLOCK ###
-    # if IS_ON_NSML:
-    #     bind_nsml(model)
-    #     if opts.pause:
-    #         nsml.paused(scope=locals())
-    # ################################
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = ResNetSimCLR(**config["model"]).to(device)
+    model.eval()
+
+    if use_gpu:
+        model.cuda()
+    #model = self._load_pre_trained_weights(model)
+    ### DO NOT MODIFY THIS BLOCK ###
+    if IS_ON_NSML:
+        bind_nsml(model)
+        if opts.pause:
+            nsml.paused(scope=locals())
+    ################################
 
     # for param in model.parameters():
     #     param.requires_grad = False
-
-    '''
-    Change model structure, classification ~~
-    '''
-    print("SimCLR Phase Ended")
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    print('  + Number of params in SimCLR: {}'.format(params))
-
-
-    self.features.requires_grad = False
-    print("Turned of gradients for all layers except classifier")
-
-
-    print("MixMatch Phase")
-    parameters = filter(lambda p: p.requires_grad, model.parameters())
-    n_parameters = sum([p.data.nelement() for p in model.parameters()])
-    params2 = sum([np.prod(p.size()) for p in parameters])
-    print('  + Total Number of params in MixMatch: {}'.format(n_parameters))
-    print('  + Number of params to train in MixMatch: {}'.format(params2))
-
     if opts.mode == 'train':
+        simclr = SimCLR(dataset, config, opts.mode)
+        model = simclr.train(model)
+        '''
+        Change model structure, classification ~~
+        '''
+        print("SimCLR Phase Ended")
+        model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+        params = sum([np.prod(p.size()) for p in model_parameters])
+        print('  + Number of params in SimCLR: {}'.format(params))
+
+        # for params in model.resnet.layer1.parameters():
+        #     params.requires_grad = False
+        # for params in model.resnet.layer2.parameters():
+        #     params.requires_grad = False
+        # for params in model.resnet.layer3.parameters():
+        #     params.requires_grad = False
+        # for params in model.resnet.layer4.parameters():
+        #     params.requires_grad = False
+        # for params in model.features.parameters():
+        #     params.requires_grad = False
+        #model.features.requires_grad = False
+        # model.resnet.layer1.requires_grad = False
+        # model.resnet.layer2.requires_grad = False
+        # model.resnet.layer3.requires_grad = False
+        # model.resnet.layer4.requires_grad = False
+        print("Turned of gradients for all layers except classifier")
+        nsml.load(checkpoint ='yongall_best', session = 'kaist_15/fashion_eval/260')
+
+        print("MixMatch Phase")
+        parameters = filter(lambda p: p.requires_grad, model.parameters())
+        n_parameters = sum([p.data.nelement() for p in model.parameters()])
+        params2 = sum([np.prod(p.size()) for p in parameters])
+        print('  + Total Number of params in MixMatch: {}'.format(n_parameters))
+        print('  + Number of params to train in MixMatch: {}'.format(params2))
+        #nsml.save(opts.name + '_best')
+        #nsml.save(opts.name + '_e{}'.format(epoch))
+
         model.train()
         # Set dataloader
         #nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/162')
@@ -324,14 +356,14 @@ def main():
         !!!!!!!!!!!
         '''
 
-        print("Title: {}".format("Fix - MixMatch"))
+        print("Title: {}".format("SimCLR - Fix - MixMatch"))
         print("Purpose: {}".format("MixMatch with threshold policy adaped from fixmatch(Chocolatefudge)"))
         print("Environments")
         print("Model: {}".format("Resnet 50"))
         print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
         print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "No Schedule"))
         print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75., lambda-u not changed in overall training step"))
-        print("Details: {}".format("Experiment for thresholding some unlabeled examples in pseudo labeling. current threshold 0.9, Continue Learning for 250~400 epoches"))
+        print("Details: {}".format("Experiment for thresholding some unlabeled examples in pseudo labeling. current threshold 0.9, Pretrained model from simclr"))
         print("Etc: {}".format("No interleaving. IDK // ***T=0.5 is applied for unlabeled data // threshold scheduling with epoch (0.9 0.875 0.85 0.825 0.8 ... 0.4) for every 5 epochs.  Without learning rate scheduling"))
 
 
@@ -556,6 +588,161 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
         avg_top5= float(avg_top5/nCnt)
         print('Test Epoch:{} Top1_acc_val:{:.2f}% Top5_acc_val:{:.2f}% '.format(epoch, avg_top1, avg_top5))
     return avg_top1, avg_top5
+
+
+
+
+
+
+def _save_config_file(model_checkpoints_folder):
+    if not os.path.exists(model_checkpoints_folder):
+        os.makedirs(model_checkpoints_folder)
+        shutil.copy('./config.yaml', os.path.join(model_checkpoints_folder, 'config.yaml'))
+
+
+class SimCLR(object):
+
+    def __init__(self, dataset, config, mode):
+        #self.model = model
+        self.config = config
+        self.device = self._get_device()
+        #self.writer = SummaryWriter()
+        self.dataset = dataset
+        self.nt_xent_criterion = NTXentLoss(self.device, config['batch_size'], **config['loss'])
+        self.mode = mode
+
+    def _get_device(self):
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print("Running on:", device)
+        return device
+
+    def _step(self, model, xis, xjs, n_iter):
+
+        # get the representations and the projections
+        # ris, zis = model(xis)  # [N,C]
+        zis, ris = model(xis)
+
+        # get the representations and the projections
+        # rjs, zjs = model(xjs)  # [N,C]
+        zjs, rjs = model(xjs)
+
+        # normalize projection feature vectors
+        zis = F.normalize(zis, dim=1)
+        zjs = F.normalize(zjs, dim=1)
+
+        loss = self.nt_xent_criterion(zis, zjs)
+        return loss
+
+    def train(self, model):
+
+
+        if self.mode=='train':
+            model.train()
+            train_loader, valid_loader = self.dataset.get_data_loaders()
+            optimizer = torch.optim.Adam(model.parameters(), 3e-4, weight_decay=eval(self.config['weight_decay']))
+
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=0,
+                                                                   last_epoch=-1)
+            # if apex_support and self.config['fp16_precision']:
+            #     model, optimizer = amp.initialize(model, optimizer,
+            #                                       opt_level='O2',
+            #                                       keep_batchnorm_fp32=True)
+
+            #model_checkpoints_folder = os.path.join(self.writer.log_dir, 'checkpoints')
+
+            # save config file
+            #_save_config_file(model_checkpoints_folder)
+
+            n_iter = 0
+            valid_n_iter = 0
+            best_valid_loss = np.inf
+
+            for epoch_counter in range(self.config['epochs']):
+                losses = AverageMeter()
+                batch_cnt = 0
+                for (xis, xjs) in train_loader:
+                    batch_cnt+=1
+                    optimizer.zero_grad()
+
+                    xis = xis.to(self.device)
+                    xjs = xjs.to(self.device)
+
+                    loss = self._step(model, xis, xjs, n_iter)
+
+                    # if n_iter % self.config['log_every_n_steps'] == 0:
+                    #     self.writer.add_scalar('train_loss', loss, global_step=n_iter)
+
+                    # if apex_support and self.config['fp16_precision']:
+                    #     with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    #         scaled_loss.backward()
+                    loss.backward()
+                    losses.update(loss.item(), xjs.size(0))
+                    optimizer.step()
+                    n_iter += 1
+                    if batch_cnt%50==0:
+                        print("Epoch: {}, [{}/{}], loss: {}".format(epoch_counter, batch_cnt*self.config['batch_size'], len(train_loader.dataset), losses.avg))
+
+
+
+
+                # validate the model if requested
+                if epoch_counter % self.config['eval_every_n_epochs'] == 0:
+                    valid_loss = self._validate(model, valid_loader)
+                    if valid_loss < best_valid_loss:
+                        # save the model weights
+                        best_valid_loss = valid_loss
+                        #torch.save(model.state_dict(), os.path.join(model_checkpoints_folder, 'model.pth'))
+                        print('saving best checkpoint...')
+                        if IS_ON_NSML:
+                            nsml.save("yongall" + '_best')
+                    #self.writer.add_scalar('validation_loss', valid_loss, global_step=valid_n_iter)
+                    valid_n_iter += 1
+                nsml.report(summary=True, valid_loss=valid_loss, loss=losses.avg, step=epoch_counter)
+                # warmup for the first 10 epochs
+                if epoch_counter >= 20:
+                    scheduler.step()
+
+
+                if (epoch_counter) % 25 == 0:
+                    if IS_ON_NSML:
+                        nsml.save("yongall" + '_e{}'.format(epoch_counter))
+                #self.writer.add_scalar('cosine_lr_decay', scheduler.get_lr()[0], global_step=n_iter)
+            return model
+        return model
+
+    def _load_pre_trained_weights(self, model):
+        try:
+            checkpoints_folder = os.path.join('./runs', self.config['fine_tune_from'], 'checkpoints')
+            state_dict = torch.load(os.path.join(checkpoints_folder, 'model.pth'))
+            model.load_state_dict(state_dict)
+            print("Loaded pre-trained model with success.")
+        except FileNotFoundError:
+            print("Pre-trained weights not found. Training from scratch.")
+
+        return model
+
+    def _validate(self, model, valid_loader):
+
+        # validation steps
+        with torch.no_grad():
+            model.eval()
+
+            valid_loss = 0.0
+            counter = 0
+            for (xis, xjs) in valid_loader:
+                xis = xis.to(self.device)
+                xjs = xjs.to(self.device)
+
+                loss = self._step(model, xis, xjs, counter)
+                valid_loss += loss.item()
+                counter += 1
+            valid_loss /= counter
+        model.train()
+        return valid_loss
+
+
+
+
 
 if __name__ == "__main__":
     main()

@@ -166,7 +166,7 @@ def split_ids(path, ratio):
         cut = int(ratio*ids_len)
         train_ids = np.concatenate((train_ids,ids_array[perm][cut:]),axis=0)
         val_ids = np.concatenate((val_ids,ids_array[perm][:cut]),axis=0)
-        
+
 
     return train_ids, val_ids, ids_u
 
@@ -225,8 +225,8 @@ parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=30, type=int, help='batchsize_labeled')
-parser.add_argument('--batchsize2', default=75, type=int, help='batchsize_unlabeled')
+parser.add_argument('--batchsize', default=50, type=int, help='batchsize_labeled')
+parser.add_argument('--batchsize2', default=125, type=int, help='batchsize_unlabeled')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
@@ -262,7 +262,7 @@ def parameters_string(module):
     ]
 
     row_format = "{name:<40} {shape:>20} ={total_size:>12,d}"
-    
+
     params = list(module.named_parameters())
     for name, param in params:
         lines.append(row_format.format(
@@ -309,7 +309,7 @@ def main():
     #ema_model = WideResNet(NUM_CLASSES)
 
     model = Res50(NUM_CLASSES)
-    #model = EfficientNet.from_pretrained('efficientnet-b4')
+    #model = EfficientNet.from_pretrained('efficientnet-b3')
     #ema_model = Res50(NUM_CLASSES)
 
 
@@ -317,7 +317,7 @@ def main():
     #print(parameters_string(ema_model))
 
     model.eval()
-    
+
     #for param in ema_model.parameters():
     #    param.detach_()
 
@@ -449,7 +449,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     acc_top5 = AverageMeter()
     #ema_acc_top1 = AverageMeter()
     #ema_acc_top5 = AverageMeter()
-    
+
     avg_loss = 0.0
     avg_top1 = 0.0
     avg_top5 = 0.0
@@ -503,17 +503,31 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         #    threshold = 0.9
         #else:
         #    threshold = max(0.9 - (epoch - 40)/300, 0.4)
-        threshold = max(0.9 - (epoch//5)/40, 0.5)
+        #threshold = max(0.9 - (epoch//5)/40, 0.5)
+        #threshold = 0
         mixup_idx = []
+
+        percentile = acc_top1.avg/100
+        #print("percentile: {}".format(percentile))
+        threshold_size = int(opts.batchsize2*percentile)
+        #print("threshold_size: {}".format(threshold_size))
+
+
+
 
         with torch.no_grad():
             embed_u1, pred_u1 = model(inputs_w)
-                
+
             pred_u_all = torch.softmax(pred_u1, dim=1)
             crit = torch.max(pred_u_all, axis=1) #batch size
-            for i in range(int(crit[0].shape[0])):
-                if crit[0][i] >= threshold:
-                    mixup_idx.append(i)
+            #print(crit[0])
+
+            mixup_idx = torch.argsort(crit[0], descending = True)[:threshold_size]
+            #print(mixup_idx)
+
+            # for i in range(int(crit[0].shape[0])):
+            #     if crit[0][i] >= threshold:
+            #         mixup_idx.append(i)
 
             pt = pred_u_all**(1/opts.T)
             pt = pred_u_all
@@ -526,8 +540,8 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         #inputs_u3 = inputs_u3[mixup_idx]
         #inputs_u4 = inputs_u4[mixup_idx]
         targets_u = targets_u[mixup_idx]
-        
-        good_ulb.update(len(mixup_idx))
+
+        good_ulb.update(threshold_size/opts.batchsize2)
 
         # mixup
 
