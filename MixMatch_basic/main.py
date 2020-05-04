@@ -53,6 +53,28 @@ def top_n_accuracy_score(y_true, y_prob, n=5, normalize=True):
     else:
         return counter
 
+def top_1_accuracy_score(y_true, y_prob, n=5, normalize=True):
+    num_obs, num_labels = y_prob.shape
+    idx = num_labels - n - 1
+    counter = 0
+    confid = []
+    y_prob_softmax = torch.softmax(y_prob, dim=1)
+    argsorted = np.argsort(y_prob.cpu().numpy(), axis=1)
+    for i in range(num_obs):
+        if y_true[i] in argsorted[i, idx+1:]:
+            counter += 1
+            confid.append(y_prob_softmax[i, argsorted[i, idx+1]].item())
+    if len(confid)==0:
+        confid_avg = 0
+        confid_min = 0
+    else:
+        confid_avg = sum(confid)/len(confid)
+        confid_min = min(confid)
+    if normalize:
+        return (counter * 1.0 / num_obs)*100, confid_avg, confid_min
+    else:
+        return counter*100, confid_avg, confid_min
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self):
@@ -185,13 +207,13 @@ parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number
 # basic settings
 parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--batchsize', default=10, type=int, help='batchsize_labeled')
-parser.add_argument('--batchsize2', default=25, type=int, help='batchsize_unlabeled')
+parser.add_argument('--batchsize', default=20, type=int, help='batchsize_labeled')
+parser.add_argument('--batchsize2', default=50, type=int, help='batchsize_unlabeled')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
 
 # basic hyper-parameters
 parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
-parser.add_argument('--lr', type=float, default=5e-3, metavar='LR', help='learning rate (default: 5e-5)')
+parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-5)')
 parser.add_argument('--imResize', default=256, type=int, help='')
 parser.add_argument('--imsize', default=224, type=int, help='')
 parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
@@ -238,7 +260,7 @@ def main():
 
     # Set model
     #model = Res50(NUM_CLASSES)
-    model = EfficientNet.from_pretrained('efficientnet-b4')
+    model = EfficientNet.from_pretrained('efficientnet-b3')
     model.eval()
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -303,7 +325,7 @@ def main():
         train_criterion = SemiLoss()
 
         # INSTANTIATE STEP LEARNING SCHEDULER CLASS
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[2,4,8], gamma=0.5)
+        #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[2,4,8], gamma=0.5)
 
         '''
         !!!!!!!!!!!!!
@@ -331,7 +353,7 @@ def main():
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
             loss, _, _ = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu)
-            scheduler.step()
+            #scheduler.step()
 
             print('start validation')
             acc_top1, acc_top5 = validation(opts, validation_loader, model, epoch, use_gpu)
@@ -436,7 +458,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         logits_x = logits[0]
         logits_u = torch.cat(logits[1:], dim=0)
 
-        loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
+        loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), 20)
         loss = loss_x + weigts_mixing * loss_un
 
         losses.update(loss.item(), inputs_x.size(0))
@@ -452,7 +474,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             # compute guessed labels of unlabel samples
             embed_x, pred_x1 = model(inputs_x)
 
-        acc_top1b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=1)*100
+        acc_top1b, confid_avg, confid_min = top_1_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data, n=1)
         acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100
         acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))
         acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))
@@ -466,6 +488,9 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
                 epoch, batch_idx *inputs_x.size(0), len(train_loader.dataset), losses.val, losses.avg, acc_top1.val, acc_top1.avg, acc_top5.val, acc_top5.avg))
 
         nCnt += 1
+        if confid_avg!=0:
+            nsml.report(summary = True, train_confidence_avg = confid_avg, train_confidence_min = confid_min, step = epoch+batch_idx/len(train_loader))
+        nsml.report(summary=True, losses_x = losses_x.avg, losses_un = losses_un.avg*weigts_mixing,  step = epoch+batch_idx/len(train_loader))
 
     avg_loss =  float(avg_loss/nCnt)
     avg_top1 = float(avg_top1/nCnt)
@@ -489,7 +514,7 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
             nCnt +=1
             embed_fea, preds = model(inputs)
 
-            acc_top1 = top_n_accuracy_score(labels.numpy(), preds.data.cpu().numpy(), n=1)*100
+            acc_top1, confid_avg, confid_min = top_1_accuracy_score(labels.numpy(), preds.data, n=1)
             acc_top5 = top_n_accuracy_score(labels.numpy(), preds.data.cpu().numpy(), n=5)*100
             avg_top1 += acc_top1
             avg_top5 += acc_top5
@@ -497,6 +522,7 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
         avg_top1 = float(avg_top1/nCnt)
         avg_top5= float(avg_top5/nCnt)
         print('Test Epoch:{} Top1_acc_val:{:.2f}% Top5_acc_val:{:.2f}% '.format(epoch, avg_top1, avg_top5))
+    nsml.report(summary = True, valid_confidence_avg = confid_avg, valid_confidence_min = confid_min, step = epoch)
     return avg_top1, avg_top5
 
 
