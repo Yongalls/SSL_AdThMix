@@ -118,8 +118,7 @@ class SemiLoss(object):
         Lx = -torch.mean(torch.sum(F.log_softmax(outputs_x, dim=1) * targets_x, dim=1))
         Lu = -torch.mean(torch.sum(F.log_softmax(outputs_u, dim=1) * targets_u, dim=1))
         #Lu = torch.mean((probs_u - targets_u)**2)
-        #Lu = -torch.mean(torch.sum(F.log_softmax(probs_u, dim=1) * targets_u, dim=1))
-        return Lx, Lu, opts.lambda_u # * linear_rampup(epoch, final_epoch)
+        return Lx, Lu, opts.lambda_u * linear_rampup(epoch, 20)
 
 def interleave_offsets(batch, nu):
     groups = [batch // (nu + 1)] * (nu + 1)
@@ -436,10 +435,14 @@ def main():
 
         # Train and Validation
         best_acc = -1
+        train_acc_top1_val = 0
+        train_loss_val = 0
+        train_loss_x_val = 0
+        train_loss_un_val = 0
         #ema = False
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
-            loss, _, _ = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu)
+            loss, _, _, train_acc_top1_val, train_loss_val, train_loss_x_val, train_loss_un_val = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu, train_acc_top1_val, train_loss_val, train_loss_x_val, train_loss_un_val)
             #scheduler.step()
 
             print('start validation')
@@ -460,7 +463,7 @@ def main():
                     torch.save(model.state_dict(), os.path.join('runs', opts.name + '_e{}'.format(epoch)))
 
 
-def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, use_gpu):
+def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, use_gpu, train_acc_top1_val, train_loss_val, train_loss_x_val, train_loss_un_val):
     losses = AverageMeter()
     losses_x = AverageMeter()
     losses_un = AverageMeter()
@@ -474,6 +477,11 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     avg_loss = 0.0
     avg_top1 = 0.0
     avg_top5 = 0.0
+
+    acc_top1.update(train_acc_top1_val, 1)
+    losses.update(train_loss_val, 1)
+    losses.update(train_loss_x_val, 1)
+    losses.update(train_loss_un_val, 1)
 
     model.train()
 
@@ -585,7 +593,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
 
         else:
             logits = [logits_temp]
-            weigts_mixing = opts.lambda_u
+            weigts_mixing = opts.lambda_u * linear_rampup(epoch+batch_idx/len(train_loader), 20)
             #logits = interleave(logits, batch_size)
             logits_x = logits[0]
             loss_x = -torch.mean(torch.sum(F.log_softmax(logits_x, dim=1) * targets_x, dim=1))
@@ -646,7 +654,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     #ema_avg_top5 = float(ema_avg_top5/nCnt)
 
     nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch)
-    return  avg_loss, avg_top1, avg_top5
+    return  avg_loss, avg_top1, avg_top5, acc_top1.val, losses.val, losses_x.val, losses_un.val
 
 
 def validation(opts, validation_loader, model, epoch, use_gpu):

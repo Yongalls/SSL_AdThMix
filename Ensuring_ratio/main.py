@@ -443,10 +443,14 @@ def main():
         best_acc = -1
         acc_top1 = 0
         train_avg_top1 = 0
+        train_acc_top1_val = 0
+        train_loss_val = 0
+        train_loss_x_val = 0
+        train_loss_un_val = 0
         #ema = False
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
-            loss, train_avg_top1, _ = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu, train_avg_top1)
+            loss, train_avg_top1, _, train_acc_top1_val, train_loss_val, train_loss_x_val, train_loss_un_val = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu, train_avg_top1, train_acc_top1_val, train_loss_val, train_loss_x_val, train_loss_un_val)
             #scheduler.step()
 
             print('start validation')
@@ -469,7 +473,7 @@ def main():
                     torch.save(model.state_dict(), os.path.join('runs', opts.name + '_e{}'.format(epoch)))
 
 
-def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, use_gpu, train_avg_top1):
+def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch, use_gpu, train_avg_top1, train_acc_top1_val, train_loss_val, train_loss_x_val, train_loss_un_val):
     print(train_avg_top1)
     ensure_ratio = (train_avg_top1 > 20)
     print(epoch, ensure_ratio)
@@ -484,6 +488,11 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     conf_min = AverageMeter()
     #ema_acc_top1 = AverageMeter()
     #ema_acc_top5 = AverageMeter()
+
+    acc_top1.update(train_acc_top1_val, 1)
+    losses.update(train_loss_val, 1)
+    losses.update(train_loss_x_val, 1)
+    losses.update(train_loss_un_val, 1)
 
     avg_loss = 0.0
     avg_top1 = 0.0
@@ -579,8 +588,6 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
                     inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()
                 inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
 
-                if batch_idx == 0:
-                    percentile = train_avg_top1/100
                 percentile = acc_top1.avg/100
                 threshold_size = int(opts.batchsize2*percentile)
 
@@ -726,7 +733,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     #ema_avg_top5 = float(ema_avg_top5/nCnt)
 
     nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch)
-    return  avg_loss, avg_top1, avg_top5
+    return  avg_loss, avg_top1, avg_top5, acc_top1.val, losses.val, losses_x.val, losses_un.val
 
 
 def validation(opts, validation_loader, model, epoch, use_gpu):
