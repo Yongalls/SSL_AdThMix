@@ -76,7 +76,6 @@ class SimpleImageLoader(torch.utils.data.Dataset):
             label = self.imclasses[index]
             return img, label
         else:
-            #img1, img2, img3, img4 = self.TransformFourth(img)
             img1, img2 = self.TransformTwice(img)
             return img1, img2
 

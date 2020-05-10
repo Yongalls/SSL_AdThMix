@@ -26,11 +26,9 @@ import tensorflow as tf
 import torch.nn.functional as F
 
 from ImageDataLoader import SimpleImageLoader
-from models import Res18, Res50, Dense121, Res18_basic
+from models import Res18, Res50
 from efficientnet_pytorch import EfficientNet
-#
-# from pytorch_metric_learning import miners
-# from pytorch_metric_learning import losses as lossfunc
+
 import glob
 
 import nsml
@@ -53,7 +51,7 @@ def top_n_accuracy_score(y_true, y_prob, n=5, normalize=True):
     else:
         return counter
 
-def top_1_accuracy_score(y_true, y_prob, n=5, normalize=True):
+def top_1_accuracy_score_with_confidence(y_true, y_prob, n=5, normalize=True):
     num_obs, num_labels = y_prob.shape
     idx = num_labels - n - 1
     counter = 0
@@ -148,6 +146,8 @@ def split_ids(path, ratio):
     perm = np.random.permutation(np.arange(len(ids_l)))
     cut = int(ratio*len(ids_l))
     train_ids = ids_l[perm][cut:]
+    ### use few labeled data
+    # train_ids = train_ids[:4000]
     val_ids = ids_l[perm][:cut]
 
     return train_ids, val_ids, ids_u
@@ -205,11 +205,13 @@ parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='num
 parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
-parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
+parser.add_argument('--name',default='MixMatchbase', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--batchsize', default=20, type=int, help='batchsize_labeled')
 parser.add_argument('--batchsize2', default=50, type=int, help='batchsize_unlabeled')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
+parser.add_argument('--load_checkpoint', default='MixMatchbase_best', type=str, help='checkpoint')
+parser.add_argument('--load_session', default='kaist_15/fashion_eval/405', type=str, help='session name')
 
 # basic hyper-parameters
 parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
@@ -259,7 +261,6 @@ def main():
 
 
     # Set model
-    #model = Res50(NUM_CLASSES)
     model = EfficientNet.from_pretrained('efficientnet-b3')
     model.eval()
 
@@ -277,7 +278,9 @@ def main():
             nsml.paused(scope=locals())
     ################################
 
-    #nsml.load(checkpoint = 'Res18baseMM_best', session = 'kaist_15/fashion_eval/4')
+    ### load model from nsml if needed ###
+    # nsml.load(checkpoint = 'opts.load_checkpoint', session = 'opts.load_session')
+
     if opts.mode == 'train':
         model.train()
         # Set dataloader
@@ -318,42 +321,16 @@ def main():
         print('validation_loader done')
 
         # Set optimizer
-        #optimizer = optim.Adam(model.parameters(), lr=opts.lr)
         optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004)
 
         # INSTANTIATE LOSS CLASS
         train_criterion = SemiLoss()
-
-        # INSTANTIATE STEP LEARNING SCHEDULER CLASS
-        #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[2,4,8], gamma=0.5)
-
-        '''
-        !!!!!!!!!!!!!
-        실험에 대한 정보 최대한 자세히 적기!!!
-        코드 다 저장해놓을순 없으니까 나중에 NSML 터미널만 보고도 무슨 실험인지 알 수 있게!
-        귀찮더라도..
-        !!!!!!!!!!!
-        '''
-
-        print("Title: {}".format("MixMatch"))
-        print("Purpose: {}".format("Mixmatch baseline testing(Chocolatefudge) // Check transfer learning 250 -> 300 epoch"))
-        print("Environments")
-        print("Model: {}".format("Resnet 50"))
-        print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "MultiStepLR with 50,150 schedule"))
-        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75."))
-        print("Details: {}".format("Experiment for constructing necessary baseline for CV project."))
-        print("Etc: {}".format("Changes from original code: Res18_basic -> Res50, batchsize smaller, Different batchsize btw labeled and unlabeled (30, 75)."))
-
-
-
 
         # Train and Validation
         best_acc = -1
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
             loss, _, _ = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu)
-            #scheduler.step()
 
             print('start validation')
             acc_top1, acc_top5 = validation(opts, validation_loader, model, epoch, use_gpu)
@@ -474,7 +451,7 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             # compute guessed labels of unlabel samples
             embed_x, pred_x1 = model(inputs_x)
 
-        acc_top1b, confid_avg, confid_min = top_1_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data, n=1)
+        acc_top1b, confid_avg, confid_min = top_1_accuracy_score_with_confidence(targets_org.data.cpu().numpy(), pred_x1.data, n=1)
         acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100
         acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))
         acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))
@@ -514,7 +491,7 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
             nCnt +=1
             embed_fea, preds = model(inputs)
 
-            acc_top1, confid_avg, confid_min = top_1_accuracy_score(labels.numpy(), preds.data, n=1)
+            acc_top1, confid_avg, confid_min = top_1_accuracy_score_with_confidence(labels.numpy(), preds.data, n=1)
             acc_top5 = top_n_accuracy_score(labels.numpy(), preds.data.cpu().numpy(), n=5)*100
             avg_top1 += acc_top1
             avg_top5 += acc_top5

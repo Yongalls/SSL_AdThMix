@@ -21,18 +21,14 @@ import torch.nn.functional as F
 
 import torchvision
 from torchvision import datasets, models, transforms
-from RA import RandAugment
 
 import tensorflow as tf
 import torch.nn.functional as F
 
 from ImageDataLoader import SimpleImageLoader
-from models import Res18, Res50, WideResNet # Dense121, Res18_basic, WideRes50_2
-#from wideresnet import WideResNet
+from models import Res18, Res50
 from efficientnet_pytorch import EfficientNet
-#
-# from pytorch_metric_learning import miners
-# from pytorch_metric_learning import losses as lossfunc
+
 import glob
 
 import nsml
@@ -55,7 +51,7 @@ def top_n_accuracy_score(y_true, y_prob, n=5, normalize=True):
     else:
         return counter
 
-def top_1_accuracy_score(y_true, y_prob, n=5, normalize=True):
+def top_1_accuracy_score_with_confidence(y_true, y_prob, n=5, normalize=True):
     num_obs, num_labels = y_prob.shape
     idx = num_labels - n - 1
     counter = 0
@@ -117,8 +113,7 @@ class SemiLoss(object):
         probs_u = torch.softmax(outputs_u, dim=1)
         Lx = -torch.mean(torch.sum(F.log_softmax(outputs_x, dim=1) * targets_x, dim=1))
         Lu = torch.mean((probs_u - targets_u)**2)
-        #Lu = -torch.mean(torch.sum(F.log_softmax(probs_u, dim=1) * targets_u, dim=1))
-        return Lx, Lu, opts.lambda_u # * linear_rampup(epoch, final_epoch)
+        return Lx, Lu, opts.lambda_u
 
 def interleave_offsets(batch, nu):
     groups = [batch // (nu + 1)] * (nu + 1)
@@ -161,8 +156,8 @@ def split_ids(path, ratio):
 
     return train_ids, val_ids, ids_u
 
-'''
-def split_ids(path, ratio):
+# equalize the ratio between each class in the training set and the validation set
+def split_ids_distributedly(path, ratio):
     with open(path) as f:
         ids_l = []
         for i in range(NUM_CLASSES):
@@ -191,7 +186,6 @@ def split_ids(path, ratio):
 
 
     return train_ids, val_ids, ids_u
-'''
 
 ### NSML functions
 def _infer(model, root_path, test_loader=None):
@@ -245,11 +239,13 @@ parser.add_argument('--start_epoch', type=int, default=1, metavar='N', help='num
 parser.add_argument('--epochs', type=int, default=300, metavar='N', help='number of epochs to train (default: 200)')
 
 # basic settings
-parser.add_argument('--name',default='Res18baseMM', type=str, help='output model name')
+parser.add_argument('--name',default='Fixed_threshold', type=str, help='output model name')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--batchsize', default=20, type=int, help='batchsize_labeled')
 parser.add_argument('--batchsize2', default=50, type=int, help='batchsize_unlabeled')
 parser.add_argument('--seed', type=int, default=123, help='random seed')
+parser.add_argument('--load_checkpoint', default='Fixed_threshold_best', type=str, help='checkpoint')
+parser.add_argument('--load_session', default='kaist_15/fashion_eval/408', type=str, help='session name')
 
 # basic hyper-parameters
 parser.add_argument('--momentum', type=float, default=0.9, metavar='LR', help=' ')
@@ -257,6 +253,7 @@ parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learni
 parser.add_argument('--imResize', default=256, type=int, help='')
 parser.add_argument('--imsize', default=224, type=int, help='')
 parser.add_argument('--lossXent', type=float, default=1, help='lossWeight for Xent')
+parser.add_argument('--threshold', type=float, default=0.5, help='fixed threshold')
 
 # arguments for logging and backup
 parser.add_argument('--log_interval', type=int, default=10, metavar='N', help='logging training status')
@@ -275,31 +272,6 @@ parser.add_argument('--ema-decay', default=0.999, type=float, metavar='ALPHA', h
 parser.add_argument('--pause', type=int, default=0)
 parser.add_argument('--mode', type=str, default='train')
 ################################
-
-def parameters_string(module):
-    lines = [
-        "",
-        "List of model parameters:",
-        "=========================",
-    ]
-
-    row_format = "{name:<40} {shape:>20} ={total_size:>12,d}"
-
-    params = list(module.named_parameters())
-    for name, param in params:
-        lines.append(row_format.format(
-            name=name,
-            shape=" * ".join(str(p) for p in param.size()),
-            total_size=param.numel()
-        ))
-    lines.append("=" * 75)
-    lines.append(row_format.format(
-        name="all parameters",
-        shape="sum of above",
-        total_size=sum(int(param.numel()) for name, param in params)
-    ))
-    lines.append("")
-    return "\n".join(lines)
 
 def main():
     global opts
@@ -325,36 +297,16 @@ def main():
     else:
         print("Currently using CPU (GPU is highly recommended)")
 
-
-    # Set model
-    #model = WideResNet(NUM_CLASSES)
-    #ema_model = WideResNet(NUM_CLASSES)
-
-    #model = Res50(NUM_CLASSES)
     model = EfficientNet.from_pretrained('efficientnet-b3')
-    #ema_model = Res50(NUM_CLASSES)
-
-
-    print(parameters_string(model))
-    #print(parameters_string(ema_model))
 
     model.eval()
-
-    #for param in ema_model.parameters():
-    #    param.detach_()
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     n_parameters = sum([p.data.nelement() for p in model.parameters()])
     print('  + Number of params: {}'.format(n_parameters))
 
-    #ema_parameters = filter(lambda p: p.requires_grad, ema_model.parameters())
-    #ema_n_parameters = sum([p.data.nelement() for p in ema_model.parameters()])
-    #print('  + Number of params: {}'.format(ema_n_parameters))
-
-
     if use_gpu:
         model.cuda()
-        #ema_model.cuda()
 
     ### DO NOT MODIFY THIS BLOCK ###
     if IS_ON_NSML:
@@ -362,6 +314,9 @@ def main():
         if opts.pause:
             nsml.paused(scope=locals())
     ################################
+
+    ### load model from nsml if needed ###
+    # nsml.load(checkpoint = 'opts.load_checkpoint', session = 'opts.load_session')
 
     if opts.mode == 'train':
         model.train()
@@ -403,48 +358,19 @@ def main():
         print('validation_loader done')
 
         # Set optimizer
-        #optimizer = optim.Adam(model.parameters(), lr=opts.lr)
         optimizer = optim.SGD(model.parameters(), lr=opts.lr, momentum = opts.momentum, weight_decay = 0.0004)
 
         # INSTANTIATE LOSS CLASS
         train_criterion = SemiLoss()
 
-        # INSTANTIATE STEP LEARNING SCHEDULER CLASS
-        #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,  milestones=[2,4,8], gamma=0.5)
-
-        '''
-        !!!!!!!!!!!!!
-        실험에 대한 정보 최대한 자세히 적기!!!
-        코드 다 저장해놓을순 없으니까 나중에 NSML 터미널만 보고도 무슨 실험인지 알 수 있게!
-        귀찮더라도..
-        !!!!!!!!!!!
-        '''
-
-        print("Title: {}".format("Fix + Re + MixMatch(k=2) (Yongalls)"))
-        print("Purpose: {}".format("MixMatch with threshold policy adaped from fixmatch(Chocolatefudge)"))
-        print("Environments")
-        print("Model: {}".format("Resnet 50"))
-        print("Hyperparameters: batchsize {}, lr {}, epoch {}, lambdau {}".format(opts.batchsize, opts.lr, opts.epochs, opts.lambda_u))
-        print("Optimizer: {}, Scheduler: {}".format("SGD with momentum 0.9, wd 0.0004", "Multistep [50], 0.1"))
-        print("Other necessary Hyperparameters: {}".format("Batchsize for unlabeled is 75., lambda-u not changed in overall training step"))
-        print("Details: {}".format("No interleaving. IDK, threshold scheduling linearly, min:(0.5).  Without learning rate cheduling"))
-        print("Etc: {}".format("weak augmentation for guessed label, strong augmentation for the rest : RandAugment(3,9), distributed validation set, k=2"))
-
-
-
-
         # Train and Validation
         best_acc = -1
-        #ema = False
         for epoch in range(opts.start_epoch, opts.epochs + 1):
             print('start training')
             loss, _, _ = train(opts, train_loader, unlabel_loader, model, train_criterion, optimizer, epoch, use_gpu)
-            #scheduler.step()
 
             print('start validation')
             acc_top1, acc_top5 = validation(opts, validation_loader, model, epoch, use_gpu)
-            #ema_acc_top1, ema_acc_top5 = validation(opts, validation_loader, epoch, use_gpu)
-            #ema = (ema_acc_top1 > acc_top1)
             is_best = acc_top1 > best_acc
             best_acc = max(acc_top1, best_acc)
             nsml.report(summary=True, train_loss= loss, val_acc_top1= acc_top1, val_acc_top5=acc_top5, step=epoch)
@@ -469,19 +395,12 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
     weight_scale = AverageMeter()
     acc_top1 = AverageMeter()
     acc_top5 = AverageMeter()
-    #ema_acc_top1 = AverageMeter()
-    #ema_acc_top5 = AverageMeter()
 
     avg_loss = 0.0
     avg_top1 = 0.0
     avg_top5 = 0.0
-    #ema_avg_top1 = 0.0
-    #ema_avg_top5 = 0.0
-
-    #print(ema)
 
     model.train()
-    #ema_model.train()
 
     nCnt =0
     labeled_train_iter = iter(train_loader)
@@ -497,12 +416,10 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             inputs_x, targets_x = data
         try:
             data = unlabeled_train_iter.next()
-            #inputs_u1, inputs_u2, inputs_u3, inputs_u4, inputs_w = data
             inputs_u1, inputs_u2 = data
         except:
             unlabeled_train_iter = iter(unlabel_loader)
             data = unlabeled_train_iter.next()
-            #inputs_u1, inputs_u2, inputs_u3, inputs_u4, inputs_w = data
             inputs_u1, inputs_u2 = data
 
         batch_size = inputs_x.size(0)
@@ -514,85 +431,36 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
 
         if use_gpu :
             inputs_x, targets_x = inputs_x.cuda(), targets_x.cuda()
-            #inputs_u1, inputs_u2 ,inputs_u3, inputs_u4, inputs_w = inputs_u1.cuda(), inputs_u2.cuda(), inputs_u3.cuda(), inputs_u4.cuda(), inputs_w.cuda()
             inputs_u1, inputs_u2 = inputs_u1.cuda(), inputs_u2.cuda()
         inputs_x, targets_x = Variable(inputs_x), Variable(targets_x)
-        #inputs_u1, inputs_u2, inputs_u3, inputs_u4, inputs_w = Variable(inputs_u1), Variable(inputs_u2), Variable(inputs_u3), Variable(inputs_u4), Variable(inputs_w)
         inputs_u1, inputs_u2 = Variable(inputs_u1), Variable(inputs_u2)
 
-        threshold = 0.8
-        #if epoch < 40:
-        #    threshold = 0.9
-        #else:
-        #    threshold = max(0.9 - (epoch - 40)/300, 0.4)
-        #threshold = max(0.9 - (epoch//5)/40, 0.5)
-        # step_interval = 100
-        # th_step = batch_idx // step_interval
-        # if epoch == 1:
-        #     threshold = max(0.9-(0.25/16)*th_step, 0.65)
-        # elif epoch == 2:
-        #     threshold = max(0.65-(0.1/16)*th_step, 0.55)
-        # elif epoch == 3:
-        #     threshold = max(0.55-(0.03/16)*th_step, 0.52)
-        # elif epoch == 4:
-        #     threshold = max(0.52-(0.01/16)*th_step, 0.51)
-        # elif epoch == 5:
-        #     threshold = max(0.51-(0.01/16)*th_step, 0.5)
-        # else:
-        #     threshold = 0.5
-        # if batch_idx % step_interval == 0:
-        #     print("epoch: {}, step: {}, threshold: {}".format(epoch, th_step, threshold))
         mixup_idx = []
-
-        #percentile = acc_top1.avg/100
-        #print("percentile: {}".format(percentile))
-        #threshold_size = int(opts.batchsize2*percentile)
-        #print("threshold_size: {}".format(threshold_size))
-
-
-
 
         with torch.no_grad():
             embed_u1, pred_u1 = model(inputs_u1)
             embed_u2, pred_u2 = model(inputs_u2)
             pred_u_all = (torch.softmax(pred_u1, dim=1) + torch.softmax(pred_u2, dim=1)) / 2
 
-            crit = torch.max(pred_u_all, axis=1) #batch size
-            #print(crit[0])
-
-            #prec_idx = torch.argsort(crit[0], descending = True)[:threshold_size]
-            #print(prec_idx, len(prec_idx))
-
-            #for i in prec_idx:
-            #    if crit[0][i] >= threshold:
-            #        mixup_idx.append(i.item())
-
-            #print(mixup_idx, len(mixup_idx))
+            ### applying fixed threshold policy
+            crit = torch.max(pred_u_all, axis=1)
 
             for i in range(int(crit[0].shape[0])):
-                if crit[0][i] >= threshold:
+                if crit[0][i] >= opts.threshold:
                     mixup_idx.append(i)
 
             pt = pred_u_all**(1/opts.T)
-            #pt = pred_u_all
             targets_u = pt / pt.sum(dim=1, keepdim=True)
             targets_u = targets_u.detach()
 
 
         inputs_u1 = inputs_u1[mixup_idx]
         inputs_u2 = inputs_u2[mixup_idx]
-        #inputs_u3 = inputs_u3[mixup_idx]
-        #inputs_u4 = inputs_u4[mixup_idx]
         targets_u = targets_u[mixup_idx]
 
-
-        #good_ulb.update(threshold_size/opts.batchsize2)
         good_ulb.update(len(mixup_idx)/opts.batchsize2)
 
         # mixup
-
-        #all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2, inputs_u3, inputs_u4], dim=0)
-        #all_targets = torch.cat([targets_x, targets_u, targets_u, targets_u, targets_u], dim=0)
         all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2], dim=0)
         all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)
 
@@ -605,28 +473,20 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
         mixed_input = lamda * input_a + (1 - lamda) * input_b
         mixed_target = lamda * target_a + (1 - lamda) * target_b
 
-        # interleave labeled and unlabed samples between batches to get correct batchnorm calculation
         mixed_input = list(torch.split(mixed_input, batch_size))
-        #mixed_input = interleave(mixed_input, batch_size, len(mixup_idx))
-        #print(len(mixed_input))
 
         optimizer.zero_grad()
 
         fea, logits_temp = model(mixed_input[0])
 
         if len(mixup_idx) != 0:
-            #print("asdlfkjasodifjasio")
             logits = [logits_temp]
             for newinput in mixed_input[1:]:
                 fea, logits_temp = model(newinput)
                 logits.append(logits_temp)
 
-            # put interleaved samples back
-            #logits = interleave(logits, batch_size, len(mixup_idx))
             logits_x = logits[0]
             logits_u = torch.cat(logits[1:], dim=0)
-            #print(logits_x.size())
-            #print(logits_u.size())
 
             loss_x, loss_un, weigts_mixing = criterion(logits_x, mixed_target[:batch_size], logits_u, mixed_target[batch_size:], epoch+batch_idx/len(train_loader), opts.epochs)
             loss = loss_x + weigts_mixing * loss_un
@@ -637,14 +497,13 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
 
         else:
             logits = [logits_temp]
-            #logits = interleave(logits, batch_size)
             logits_x = logits[0]
             loss_x = -torch.mean(torch.sum(F.log_softmax(logits_x, dim=1) * targets_x, dim=1))
             loss = loss_x
             losses.update(loss.item(), inputs_x.size(0))
             losses_x.update(loss_x.item(), inputs_x.size(0))
             losses_un.update(0, inputs_x.size(0))
-            weight_scale.update(75, inputs_x.size(0))
+            weight_scale.update(opts.batchsize2, inputs_x.size(0))
 
 
 
@@ -656,21 +515,14 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             # compute guessed labels of unlabel samples
             embed_x, pred_x1 = model(inputs_x)
 
-        acc_top1b, confid_avg, confid_min = top_1_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data, n=1)
+        acc_top1b, confid_avg, confid_min = top_1_accuracy_score_with_confidence(targets_org.data.cpu().numpy(), pred_x1.data, n=1)
         acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), pred_x1.data.cpu().numpy(), n=5)*100
         acc_top1.update(torch.as_tensor(acc_top1b), inputs_x.size(0))
         acc_top5.update(torch.as_tensor(acc_top5b), inputs_x.size(0))
 
-        #acc_top1b = top_n_accuracy_score(targets_org.data.cpu().numpy(), ema_pred_x1.data.cpu().numpy(), n=1)*100
-        #ema_acc_top5b = top_n_accuracy_score(targets_org.data.cpu().numpy(), ema_pred_x1.data.cpu().numpy(), n=5)*100
-        #ema_acc_top1.update(torch.as_tensor(ema_acc_top1b), inputs_x.size(0))
-        #ema_acc_top5.update(torch.as_tensor(ema_acc_top5b), inputs_x.size(0))
-
         avg_loss += loss.item()
         avg_top1 += acc_top1b
         avg_top5 += acc_top5b
-        #ema_avg_top1 += ema_acc_top1b
-        #ema_avg_top5 += ema_acc_top5b
 
         if batch_idx % opts.log_interval == 0:
             print('Train Epoch:{} [{}/{}] Loss:{:.4f}({:.4f}) Top-1:{:.2f}%({:.2f}%) Top-5:{:.2f}%({:.2f}%)'.format(
@@ -681,13 +533,10 @@ def train(opts, train_loader, unlabel_loader, model, criterion, optimizer, epoch
             nsml.report(summary = True, train_confidence_avg = confid_avg, train_confidence_min = confid_min, step = epoch+batch_idx/len(train_loader))
         nCnt += 1
         nsml.report(summary=True, losses_x = losses_x.avg, losses_un = losses_un.avg*150,  step = epoch+batch_idx/len(train_loader))
-        #update_ema_variables(model, ema_model, opts.ema_decay, nCnt)
 
     avg_loss =  float(avg_loss/nCnt)
     avg_top1 = float(avg_top1/nCnt)
     avg_top5 = float(avg_top5/nCnt)
-    #ema_avg_top1 = float(ema_avg_top1/nCnt)
-    #ema_avg_top5 = float(ema_avg_top5/nCnt)
 
     nsml.report(summary=True, train_acc_top1= avg_top1, train_acc_top5=avg_top5, step=epoch)
     return  avg_loss, avg_top1, avg_top5
@@ -707,7 +556,7 @@ def validation(opts, validation_loader, model, epoch, use_gpu):
             nCnt +=1
             embed_fea, preds = model(inputs)
 
-            acc_top1, confid_avg, confid_min = top_1_accuracy_score(labels.numpy(), preds.data, n=1)
+            acc_top1, confid_avg, confid_min = top_1_accuracy_score_with_confidence(labels.numpy(), preds.data, n=1)
             acc_top5 = top_n_accuracy_score(labels.numpy(), preds.data.cpu().numpy(), n=5)*100
             avg_top1 += acc_top1
             avg_top5 += acc_top5
