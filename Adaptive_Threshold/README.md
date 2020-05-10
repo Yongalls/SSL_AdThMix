@@ -1,4 +1,4 @@
-## MixMatch_basic
+## Adaptive Threshold
 
 ### Excution
 
