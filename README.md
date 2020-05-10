@@ -7,6 +7,7 @@ With a great amount of labeled data, the role of unlabeled samples in semi-super
 
 ## Overall Structure
 Our GitHub repo is divided into 3 parts. Please keep in mind that all codes in here are for NSML environment, not in local machines.  <br>
+<br>
 First, MixMatch_basic, Fixed_Threshold, Adaptive_Threshold contains finalized version of each source code that we used in our environments. These codes have proper argument settings that can be used to further research. Detailed instructions can be found in each directory. 
 <br><br>
 Second, Experiment_codes contains exact source codes and some informations about experiements that was conducted in NSML. Each folder has session name on it, and exact files and configurations are inside each folder. This is to reproduce results that are in our presentation and paper. However, due to randomization in validation, exact accuracy might differ a bit. 
