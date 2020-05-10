@@ -1,4 +1,8 @@
 ## Adaptive Threshold
+Our final adaptive threshold algorithm is implemented here. 
+We used current train accuracy as a percentile for unlabeled data. 
+Also, we set 0.5 as minimum value for pseudo label's confidence. 
+Also, loss term for unlabeled data has been changed to cross entropy.
 
 ### Excution
 
