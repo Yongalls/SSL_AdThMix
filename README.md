@@ -12,7 +12,7 @@ Contains Adoptive Threshold version of MixMatch, which is the final result of ou
 
 ## Experiment_codes
 Contains exact codes which is used for our data in presentation and report. 
-Specific description about session number and experiments are in "Experiment Data.pdf"
+Specific description about session number and experiments are in "Experiment_codes/Experiment Data.pdf"
 
 ## Etc 
 This folder contains implemented SSL algorithms from various papers but not used in final version
