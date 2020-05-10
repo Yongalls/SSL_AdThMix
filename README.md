@@ -1,4 +1,8 @@
 # Adaptive Threshold MixMatch
+Midterm Project for KAIST CS492H: Special Topics in Computer Science<Deep Learning for Real-world Problems.<br>
+done by Donghyun Kim([Github](https://github.com/chocolatefudge)) / Yongmin Lee([Github](https://github.com/Yongalls)). 
+
+## Abstract
 With a great amount of labeled data, the role of unlabeled samples in semi-supervised learning often becomes insignificant. Because proper usage of unlabeled data is crucial for semi-supervised learning to be applicable in real-world problems, we have to refrain from training steps to be dominated by labeled data. To utilize unlabeled data more elegantly, we devised an advanced scheduling algorithm for managing pseudo labels in intermediate steps. Our algorithm filters the pseudo label by its confidence depending on the model’s current learning phase. As a result, it increased the model’s performance as well as adding more robustness where there are few labeled data. We gained 1.17% additional top 1 accuracy compared to MixMatch. Our research also can be combined with other SSL methods, since it’s compact and well applicable to other domains. 
 
 ## Overall Structure
