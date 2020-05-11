@@ -14,6 +14,7 @@ Second, Experiment_codes contains exact source codes and some informations about
 <br><br>
 Finally, etc folder contains remaining codes that are used in our research, but are not related with our final paper. Some implementation of SSL papers, code fragments, intermediate version of our implementation might be included in the folder. 
 <br><br>
+2020.5.11 Report and Experiment Note added. 
 
 ## MixMatch_basic
 Contains baseline codes for MixMatch. 
